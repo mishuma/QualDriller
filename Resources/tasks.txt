@@ -1,0 +1,21 @@
+# QualDriller task list
+#
+# One task per line. Leading numbers are optional. Blank lines and lines
+# starting with # or // are ignored.
+#
+# An optional par time may be appended in any of these forms:
+#     ... | 2.5
+#     ... [2.5s]
+#     ... (par 2.5)
+# A task with no par time is still timed — it just isn't scored PASS/FAIL.
+#
+# Replace this file from inside the app: Settings > Import a task list.
+
+1. From the holster, draw and fire two rounds to the body. | 2.5
+2. From the ready position, fire one round to the head. | 1.5
+3. From the holster, draw and fire two to the body, one to the head. | 4.0
+4. From the ready position, fire two rounds, slide-lock reload, fire two more. | 8.0
+5. From the holster, draw strong hand only and fire two rounds. | 4.0
+6. From the ready position, fire two rounds, transition to support hand only, fire two rounds. | 7.0
+7. From the holster, draw and fire five rounds to the body. | 6.0
+8. From the ready position, fire one round, execute a tactical reload, fire one round. | 6.5

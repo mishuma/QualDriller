@@ -11,11 +11,17 @@
 #
 # Replace this file from inside the app: Settings > Import a task list.
 
-1. From the holster, draw and fire two rounds to the body. | 2.5
-2. From the ready position, fire one round to the head. | 1.5
-3. From the holster, draw and fire two to the body, one to the head. | 4.0
-4. From the ready position, fire two rounds, slide-lock reload, fire two more. | 8.0
-5. From the holster, draw strong hand only and fire two rounds. | 4.0
-6. From the ready position, fire two rounds, transition to support hand only, fire two rounds. | 7.0
-7. From the holster, draw and fire five rounds to the body. | 6.0
-8. From the ready position, fire one round, execute a tactical reload, fire one round. | 6.5
+1. From the low ready position, fire one round to the center of mass. | 3.0
+2. From the high ready position, fire one round to the center of mass. | 3.0
+3. From the holster, one round to the center of mass. | 4.0
+4. From the holster, one round to the head. | 4.0
+5. From the ready position of your choice, fire until empty, reload, and then fire two shots to the center of mass. | 8.0
+6. From the ready position, tack reload, on the buzzer, two to the chest one to the head. | 8.0
+7. From the holster finish all your magazines. | 8.0
+8. Bringing the target out to 7 yards, from the holster, you're gonna give me two shots to the center of mass. | 4.0
+9. From the holster, give me three shots to the center of mass. Standby. | 6.0
+10. From the holster, give me four shots to the center of mass. Standby. | 8.0
+11. From the holster, give me five shots to the center of mass with the reload obviously. Standby. | 12.0
+12. From the ready position of your choice, fire until empty. | 8.0
+13. Bringing the target out to 15 yards, from the holster, one shot to the head, you have six seconds to do this drill. | 6.0
+14. OK, you're going to clear a jam and any malfunction you may have. You have four shots. From the shooting position. Stand by. | 18.0

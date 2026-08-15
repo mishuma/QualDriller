@@ -54,6 +54,9 @@ final class DrillEngine: ObservableObject {
     @Published var sensitivity: Double  { didSet { Self.d.set(sensitivity, forKey: "sensitivity") } }
     @Published var blankingMs: Double   { didSet { Self.d.set(blankingMs, forKey: "blankingMs") } }
     @Published var maxRunSeconds: Double { didSet { Self.d.set(maxRunSeconds, forKey: "maxRunSeconds") } }
+    /// Beat between the shot landing and the examiner speaking, so the readback
+    /// doesn't start while you're still yelling.
+    @Published var resultPause: Double  { didSet { Self.d.set(resultPause, forKey: "resultPause") } }
     @Published var shuffle: Bool        { didSet { Self.d.set(shuffle, forKey: "shuffle") } }
     @Published var speakAloud: Bool     { didSet { Self.d.set(speakAloud, forKey: "speakAloud") } }
     @Published var readBackTime: Bool   { didSet { Self.d.set(readBackTime, forKey: "readBackTime") } }
@@ -83,13 +86,15 @@ final class DrillEngine: ObservableObject {
         d.register(defaults: [
             "useRandomDelay": true, "fixedDelay": 2.0, "sensitivity": 1.0,
             "blankingMs": 350.0, "maxRunSeconds": 30.0, "shuffle": false,
-            "speakAloud": true, "readBackTime": true, "listenForVoice": true
+            "speakAloud": true, "readBackTime": true, "listenForVoice": true,
+            "resultPause": 1.2
         ])
         useRandomDelay = d.bool(forKey: "useRandomDelay")
         fixedDelay     = d.double(forKey: "fixedDelay")
         sensitivity    = d.double(forKey: "sensitivity")
         blankingMs     = d.double(forKey: "blankingMs")
         maxRunSeconds  = d.double(forKey: "maxRunSeconds")
+        resultPause    = d.double(forKey: "resultPause")
         shuffle        = d.bool(forKey: "shuffle")
         speakAloud     = d.bool(forKey: "speakAloud")
         readBackTime   = d.bool(forKey: "readBackTime")
@@ -192,7 +197,9 @@ final class DrillEngine: ObservableObject {
             if aborted { break }
             await runTask(tasks[idx], number: i + 1, total: order.count)
             if aborted { break }
-            try? await Task.sleep(for: .milliseconds(700))
+            // Breathing room before the next command is read, so the readback
+            // and the next task don't run together.
+            try? await Task.sleep(for: .seconds(max(1.4, resultPause)))
         }
 
         voice.stop()
@@ -324,14 +331,30 @@ final class DrillEngine: ObservableObject {
                 : String(format: "%@ · threshold %.3f", reference, threshold)
 
             if readBackTime {
-                var phrase = String(format: "%.2f seconds", elapsed)
-                if let par = task.par {
-                    phrase += verdictText == "PASS"
-                        ? ". Pass."
-                        : String(format: ". Fail. Par was %.1f seconds.", par)
+                // Let the shot land before the examiner starts talking. Without
+                // this the readback begins while you are still yelling "Bang!"
+                // and the number is lost under your own voice. The time and
+                // verdict are already on screen, so the pause costs nothing.
+                if resultPause > 0 {
+                    try? await Task.sleep(for: .seconds(resultPause))
+                    if aborted { return }
                 }
-                log("EXAM", phrase)
-                await speaker.say(phrase)
+
+                let timePhrase = String(format: "%.2f seconds", elapsed)
+                log("EXAM", timePhrase)
+                await speaker.say(timePhrase)
+
+                // Separate utterance, with a beat: "3.42 seconds. Fail. Par was
+                // 2.5 seconds." spoken as one string runs together at speed.
+                if let par = task.par {
+                    try? await Task.sleep(for: .milliseconds(450))
+                    if aborted { return }
+                    let call = verdictText == "PASS"
+                        ? "Pass."
+                        : String(format: "Fail. Par was %.1f seconds.", par)
+                    log("EXAM", call)
+                    await speaker.say(call)
+                }
             }
         } else {
             verdictText = "DNF"

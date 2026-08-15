@@ -236,12 +236,21 @@ private struct SettingsView: View {
                        + "window can't be detected, so keep it just long enough.")
                 }
 
-                Section("Voice") {
+                Section {
                     Toggle("Examiner speaks aloud", isOn: $engine.speakAloud)
                     Toggle("Listen for my replies", isOn: $engine.listenForVoice)
                     Toggle("Read my time back", isOn: $engine.readBackTime)
+                    VStack(alignment: .leading) {
+                        Text(String(format: "Pause before readback: %.1f s", engine.resultPause))
+                        Slider(value: $engine.resultPause, in: 0...3, step: 0.1)
+                    }
                     LabeledContent("Offline model",
                                    value: engine.voice.onDeviceAvailable ? "installed" : "missing")
+                } header: {
+                    Text("Voice")
+                } footer: {
+                    Text("The pause is the gap between your last shot and the spoken time. "
+                       + "The number appears on screen immediately either way.")
                 }
 
                 Section("Session log") {

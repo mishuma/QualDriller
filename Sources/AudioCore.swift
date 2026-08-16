@@ -56,6 +56,7 @@ final class AudioCore {
     private var lock = os_unfair_lock_s()
     private var armed = false
     private var armAtHost: UInt64 = 0
+    private var refractoryHost: UInt64 = 0     // 0 == fire once, then disarm
     private var threshold: Float = 0.25
     private var calibrating = false
     private var noisePeak: Float = 0
@@ -138,9 +139,20 @@ final class AudioCore {
             guard Swift.abs(ch[i]) >= thr else { continue }
             let t = base &+ Self.secToHost(Double(i) / sr)
             if t < armAt { continue }              // still inside the blanking window
-            os_unfair_lock_lock(&lock); armed = false; os_unfair_lock_unlock(&lock)
+
+            os_unfair_lock_lock(&lock)
+            if refractoryHost > 0 {
+                // Multi-shot: stay armed but go blind for the dead time, so one
+                // report per shot instead of one per threshold crossing. A shout
+                // or a muzzle blast crosses the threshold many times.
+                armAtHost = t &+ refractoryHost
+            } else {
+                armed = false
+            }
+            os_unfair_lock_unlock(&lock)
+
             DispatchQueue.main.async { self.onDetect?(t) }
-            return
+            return                                  // at most one report per buffer
         }
     }
 
@@ -161,9 +173,21 @@ final class AudioCore {
     }
 
     /// Arms the detector. Crossings before `fromHost` are ignored.
-    func arm(fromHost: UInt64, threshold thr: Float) {
+    ///
+    /// `refractory` is the dead time after each report. Pass 0 for a single
+    /// report (the detector disarms itself); pass a positive value to keep
+    /// reporting every shot in a string with that much blindness between them.
+    ///
+    /// Sizing it matters: a gunshot is a 1-3 ms transient and live splits can be
+    /// 0.15 s, so ~0.10 s is right for live fire. A shouted "Bang!" lasts
+    /// 300-500 ms and would otherwise register as several shots, so dry practice
+    /// needs ~0.30 s. There is no single value that serves both.
+    func arm(fromHost: UInt64, threshold thr: Float, refractory: Double = 0) {
         os_unfair_lock_lock(&lock)
-        armed = true; armAtHost = fromHost; threshold = thr
+        armed = true
+        armAtHost = fromHost
+        threshold = thr
+        refractoryHost = refractory > 0 ? Self.secToHost(refractory) : 0
         os_unfair_lock_unlock(&lock)
     }
 

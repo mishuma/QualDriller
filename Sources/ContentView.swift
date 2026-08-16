@@ -14,6 +14,9 @@ struct ContentView: View {
                     BannerView(text: banner) { engine.banner = nil }
                 }
 
+                MagazineBar(ammo: engine.ammo)
+                    .padding(.top, 6)
+
                 stage
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
@@ -82,6 +85,22 @@ struct ContentView: View {
                 .font(.headline).tracking(1.5)
                 .foregroundStyle(engine.verdict.hasPrefix("PASS") ? .green : .red)
 
+            SplitsRow(shots: engine.liveShots, expected: engine.expectedShots)
+
+            // Running dry has to be unmissable, and it can only be shown — an
+            // audible cue during a timed string would cross the detector's
+            // threshold and be counted as a shot.
+            if engine.isRunning && engine.ammo.roundsInCurrent == 0 {
+                Label(engine.ammo.hasSpareMagazine ? "MAGAZINE EMPTY — RELOAD"
+                                                   : "OUT OF AMMUNITION",
+                      systemImage: "exclamationmark.triangle.fill")
+                    .font(.subheadline.weight(.bold)).tracking(1)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14).padding(.vertical, 7)
+                    .background(Color.red, in: Capsule())
+                    .transition(.scale.combined(with: .opacity))
+            }
+
             Text(engine.hint.isEmpty ? " " : engine.hint)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -113,30 +132,47 @@ struct ContentView: View {
             // The buttons are a first-class path, not a fallback. Gloves, wind,
             // ear pro and a noisy bay all defeat speech recognition.
             if engine.phase == "timing" {
-                BigButton(title: "STOP TIMER", tint: .red) { engine.manualStop() }
-            } else if engine.phase == "awaiting reply" {
                 HStack(spacing: 10) {
-                    BigButton(title: "YES", tint: .green) { engine.answer(.yes) }
-                    BigButton(title: "NO", tint: .orange) { engine.answer(.no) }
+                    BigButton(title: "STOP", tint: .red) { engine.stopString() }
+                    BigButton(title: "RELOAD", tint: .teal) { engine.reloadNow() }
+                    BigButton(title: "DO OVER", tint: .purple) { engine.answer(.doOver) }
                 }
-                BigButton(title: "REPEAT COMMAND", tint: .blue) { engine.answer(.repeatCommand) }
-            } else if engine.phase == "standing by" {
-                BigButton(title: "I'M READY", tint: .green) { engine.answer(.ready) }
+            } else if engine.phase == "awaiting reply" || engine.phase == "paused" {
+                // Yes and Repeat only. The app is already waiting here, so a
+                // Pause button is redundant, and Repeat re-reads the command —
+                // which is what Do Over would do at this point anyway.
+                HStack(spacing: 10) {
+                    BigButton(title: engine.phase == "paused" ? "CONTINUE" : "YES",
+                              tint: .green) { engine.answer(.yes) }
+                    BigButton(title: "REPEAT", tint: .blue) { engine.answer(.repeatCommand) }
+                }
+            } else if engine.phase == "result" || engine.phase == "ready for next" {
+                HStack(spacing: 10) {
+                    BigButton(title: "DO OVER", tint: .purple) { engine.answer(.doOver) }
+                    BigButton(title: "RELOAD", tint: .teal) { engine.reloadNow() }
+                }
             } else {
                 HStack(spacing: 10) {
                     BigButton(title: engine.isRunning ? "RUNNING" : "START",
                               tint: .accentColor) { engine.start() }
                         .disabled(engine.isRunning || engine.tasks.isEmpty)
-                    if engine.isRunning {
-                        BigButton(title: "STOP", tint: .gray) { engine.stopSession() }
+                    if !engine.isRunning {
+                        BigButton(title: "RELOAD", tint: .teal) { engine.reloadNow() }
+                            .disabled(!engine.ammo.hasSpareMagazine)
                     }
                 }
             }
 
-            if engine.isRunning && engine.phase != "idle" {
-                Button("End session", role: .destructive) { engine.stopSession() }
-                    .font(.footnote)
+            // Always present, in every phase — no hunting for it mid-drill.
+            Button(role: .destructive) {
+                engine.stopSession()
+            } label: {
+                Text("END SESSION")
+                    .font(.subheadline.weight(.semibold)).tracking(1)
+                    .frame(maxWidth: .infinity, minHeight: 42)
             }
+            .buttonStyle(.bordered)
+            .tint(.red)
         }
     }
 }
@@ -156,6 +192,84 @@ private struct BigButton: View {
         }
         .buttonStyle(.borderedProminent)
         .tint(tint)
+    }
+}
+
+/// Magazines 1-3, left to right. The one in the gun is outlined; magazines
+/// already swapped past are struck through, because they are never used again
+/// this session even if rounds were left in them.
+private struct MagazineBar: View {
+    let ammo: AmmoState
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ForEach(ammo.magazines) { mag in
+                let isCurrent = mag.id - 1 == ammo.current && !mag.retired
+                let dry = isCurrent && mag.isEmpty
+                let accent: Color = dry ? .red : .teal
+                HStack(spacing: 5) {
+                    Text("MAG \(mag.id)")
+                        .font(.system(size: 10, weight: .semibold)).tracking(0.5)
+                    Text(mag.retired ? "—" : dry ? "EMPTY" : "\(mag.rounds)")
+                        .font(.system(.subheadline, design: .rounded).weight(.bold))
+                        .monospacedDigit()
+                }
+                .foregroundStyle(mag.retired ? AnyShapeStyle(.tertiary)
+                                 : dry ? AnyShapeStyle(Color.red)
+                                 : isCurrent ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+                .strikethrough(mag.retired)
+                .padding(.horizontal, 9).padding(.vertical, 5)
+                .background {
+                    RoundedRectangle(cornerRadius: 7)
+                        .fill(isCurrent ? accent.opacity(dry ? 0.22 : 0.16) : Color.clear)
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 7)
+                                .strokeBorder(isCurrent ? accent : Color.clear, lineWidth: 1.5)
+                        }
+                }
+            }
+            Spacer(minLength: 0)
+            Text("\(ammo.totalRemaining) left")
+                .font(.caption).monospacedDigit()
+                .foregroundStyle(ammo.totalRemaining == 0 ? .red : .secondary)
+        }
+        .padding(.horizontal, 14)
+    }
+}
+
+/// Shot-by-shot readout: cumulative time on top, the split from the previous
+/// shot underneath. Empty slots show what is still owed on the string.
+private struct SplitsRow: View {
+    let shots: [Double]
+    let expected: ShotCount
+
+    var body: some View {
+        let pending = max(0, (expected.fixedValue ?? 0) - shots.count)
+        HStack(spacing: 8) {
+            ForEach(Array(shots.enumerated()), id: \.offset) { i, t in
+                VStack(spacing: 1) {
+                    Text(String(format: "%.2f", t))
+                        .font(.system(.caption, design: .rounded).weight(.semibold))
+                        .monospacedDigit()
+                    Text(i == 0 ? "1st" : String(format: "+%.2f", t - shots[i - 1]))
+                        .font(.system(size: 10)).monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 7).padding(.vertical, 4)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+            }
+            ForEach(0..<pending, id: \.self) { _ in
+                RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(.quaternary, style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                    .frame(width: 40, height: 34)
+            }
+            if expected.fixedValue == nil && !shots.isEmpty {
+                Text(expected == .magazine ? "to empty" : "open")
+                    .font(.system(size: 10)).foregroundStyle(.tertiary)
+            }
+        }
+        .frame(height: 36)
+        .animation(.easeOut(duration: 0.15), value: shots.count)
     }
 }
 
@@ -226,6 +340,8 @@ private struct SettingsView: View {
                     }
                     Stepper("Blanking: \(Int(engine.blankingMs)) ms",
                             value: $engine.blankingMs, in: 0...1500, step: 25)
+                    Stepper("Shot dead time: \(Int(engine.refractoryMs)) ms",
+                            value: $engine.refractoryMs, in: 20...800, step: 10)
                     Stepper("Run timeout: \(Int(engine.maxRunSeconds)) s",
                             value: $engine.maxRunSeconds, in: 3...300, step: 1)
                 } header: {
@@ -233,7 +349,37 @@ private struct SettingsView: View {
                 } footer: {
                     Text("The threshold is recalibrated to the room's noise floor before every buzzer. "
                        + "Blanking ignores the buzzer's own sound — it also means a shot inside that "
-                       + "window can't be detected, so keep it just long enough.")
+                       + "window can't be detected, so keep it just long enough.\n\n"
+                       + "Shot dead time is how long the detector ignores the mic after each shot. "
+                       + "A gunshot is a 1–3 ms transient, so live fire wants ~100 ms. A shouted "
+                       + "“Bang!” lasts 300–500 ms and needs ~300 ms or one shout counts as several "
+                       + "shots. No single value serves both — set it for how you're practising.")
+                }
+
+                Section {
+                    ForEach(0..<3, id: \.self) { i in
+                        Stepper("Magazine \(i + 1): \(engine.magCapacities.count > i ? engine.magCapacities[i] : 0) rounds",
+                                value: Binding(
+                                    get: { engine.magCapacities.count > i ? engine.magCapacities[i] : 0 },
+                                    set: { new in
+                                        var c = engine.magCapacities
+                                        while c.count < 3 { c.append(0) }
+                                        c[i] = min(AmmoState.maxRounds, max(0, new))
+                                        engine.magCapacities = c
+                                    }),
+                                in: 0...AmmoState.maxRounds)
+                    }
+                    Toggle("Auto-swap when dry", isOn: $engine.autoAdvanceOnEmpty)
+                } header: {
+                    Text("Ammunition")
+                } footer: {
+                    Text("Magazines are filled at the start of each session and deplete across "
+                       + "every drill, in order 1 → 2 → 3. A magazine you reload past is never "
+                       + "used again, even with rounds left in it — that is a tactical reload, "
+                       + "and it is allowed at any time.\n\n"
+                       + "Every loud event costs a round: a shot fires one, a rack ejects one. "
+                       + "Auto-swap moves to the next magazine when the current one runs dry, so "
+                       + "live fire doesn't need you to call each reload out loud.")
                 }
 
                 Section {
@@ -251,6 +397,28 @@ private struct SettingsView: View {
                 } footer: {
                     Text("The pause is the gap between your last shot and the spoken time. "
                        + "The number appears on screen immediately either way.")
+                }
+
+                Section {
+                    Picker("Voice", selection: $engine.voicePreference) {
+                        ForEach(Speaker.VoicePreference.allCases) { p in
+                            Text(p.title).tag(p)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    LabeledContent("Using",
+                                   value: Speaker.describe(Speaker.bestVoice(for: engine.voicePreference)))
+                        .font(.caption)
+                    Button("Preview voice") { engine.previewVoice() }
+                } header: {
+                    Text("Examiner voice")
+                } footer: {
+                    Text("One male and one female, both picked as the most natural English voice "
+                       + "installed on this iPhone — novelty voices are excluded. The choice is "
+                       + "resolved by quality at run time, so downloading a better voice under "
+                       + "Settings › Accessibility › Spoken Content › Voices upgrades this "
+                       + "automatically. Downloaded voices work offline.")
                 }
 
                 Section("Session log") {
@@ -291,7 +459,7 @@ private struct ResultsView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(r.text).font(.subheadline)
                         HStack(spacing: 12) {
-                            Text(r.time.map { String(format: "%.2f s", $0) } ?? "—")
+                            Text(r.total.map { String(format: "%.2f s", $0) } ?? "—")
                                 .monospacedDigit().bold()
                             if let par = r.par {
                                 Text(String(format: "par %.2f", par)).foregroundStyle(.secondary)
@@ -302,6 +470,12 @@ private struct ResultsView: View {
                             if r.manual { Text("manual").foregroundStyle(.tertiary) }
                         }
                         .font(.caption)
+                        if r.shots.count > 1 {
+                            Text("1st \(String(format: "%.2f", r.first ?? 0))   splits "
+                                 + r.splits.map { String(format: "%.2f", $0) }.joined(separator: " · "))
+                                .font(.caption2).monospacedDigit()
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             }

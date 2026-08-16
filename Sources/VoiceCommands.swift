@@ -7,6 +7,13 @@ enum DrillCommand {
     case no             // also "pause" — pauses in place
     case repeatCommand
     case doOver
+    /// Leaves the queued state and reads the command. Voice or the Start button.
+    case start
+    /// Queue the next / previous drill without shooting this one. Buttons only:
+    /// there is no voice form, because "next" and "back" are common enough in
+    /// range chatter to fire by accident.
+    case nextTask
+    case prevTask
 }
 
 extension VoiceCommands {
@@ -18,6 +25,9 @@ extension VoiceCommands {
         /// readback, where every other utterance must be ignored — including
         /// "Bang" and "Rack", which are counted by loudness and never by words.
         case doOverOnly
+        /// Only "start". Used in the queued state, where nothing is scored and
+        /// nothing is timed, so the only thing worth hearing is the go-ahead.
+        case queued
     }
 }
 
@@ -194,6 +204,13 @@ final class VoiceCommands {
         guard !t.isEmpty else { return nil }
         func has(_ alternatives: String) -> Bool {
             t.range(of: "\\b(\(alternatives))\\b", options: .regularExpression) != nil
+        }
+
+        // The queued state has its own tiny vocabulary and is checked first, so
+        // that "start over" resolves to start rather than doOver. There is
+        // nothing to do over here — the arrows are how you move between drills.
+        if mode == .queued {
+            return has("start|go|ready|begin|let's go|lets go") ? .start : nil
         }
 
         // "do over" is checked first and is the only thing heard mid-string.

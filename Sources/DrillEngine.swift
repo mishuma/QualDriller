@@ -6,10 +6,15 @@ import UIKit
 /// The examiner.
 ///
 /// Per task:
+///   0. QUEUED — the drill is named on screen but nothing has been read out and
+///      nothing is armed. "Start" (or the Start button) begins it; the arrows
+///      move to the next or previous drill without shooting this one; Reload
+///      refills all magazines. This is the only phase in which any of those
+///      three things can happen, and it is entered before every task.
 ///   1. read the command
-///   2. "Shooter ready?"
+///   2. "Shooter ready?" (or "Standby.", per `readyPrompt`)
 ///   3. shooter answers Yes / No (= Pause) / Repeat command / Do over
-///      (Reload is a button only — see reloadNow)
+///      (Reload is a queued-state button only — see refillAll)
 ///        Yes      -> delay, buzzer, timed string
 ///        No       -> pause in place; Yes resumes to the buzzer, Repeat re-reads
 ///        Repeat   -> start again from step 1
@@ -44,8 +49,24 @@ final class DrillEngine: ObservableObject {
     @Published var liveShots: [Double] = []
     @Published var expectedShots: ShotCount = .fixed(1)
     @Published var ammo: AmmoState = .loaded(AmmoState.defaultCapacities)
+    /// Position in the running order while queued, so the arrows can be
+    /// disabled at the ends rather than silently doing nothing.
+    @Published var queuedIndex = 0
+    @Published var queuedCount = 0
+
+    var canGoNext: Bool { phase == "queued" && queuedIndex + 1 < queuedCount }
+    var canGoPrev: Bool { phase == "queued" && queuedIndex > 0 }
 
     enum TimerTint { case neutral, running, pass, fail }
+
+    /// What the examiner says after reading the command. Wording only — the
+    /// drill still waits for an answer either way.
+    enum ReadyPrompt: String, CaseIterable, Identifiable {
+        case shooterReady, standby
+        var id: String { rawValue }
+        var title: String { self == .shooterReady ? "Shooter ready?" : "Standby." }
+        var spoken: String { title }
+    }
 
     struct LogLine: Identifiable {
         let id = UUID()
@@ -79,6 +100,21 @@ final class DrillEngine: ObservableObject {
     /// Swap to the next magazine automatically when the current one runs dry.
     /// Without this, live fire would require narrating every reload out loud.
     @Published var autoAdvanceOnEmpty: Bool { didSet { Self.d.set(autoAdvanceOnEmpty, forKey: "autoAdvanceOnEmpty") } }
+    /// Hard floor under the calibrated threshold. The threshold is derived from
+    /// the room's noise floor, which in a quiet bay lands far below a gunshot
+    /// and well within reach of a holster draw. Raising the floor is the blunt
+    /// fix for that and costs nothing in timing accuracy.
+    @Published var minThreshold: Double { didSet { Self.d.set(minThreshold, forKey: "minThreshold") } }
+    /// Reject crossings that are not impulsive. See AudioCore.arm.
+    @Published var impulseGate: Bool    { didSet { Self.d.set(impulseGate, forKey: "impulseGate") } }
+    @Published var impulseRatio: Double { didSet { Self.d.set(impulseRatio, forKey: "impulseRatio") } }
+    /// Log the measured impulse ratio for every detection and every rejection,
+    /// which is the only way to pick a ratio from real range data.
+    @Published var logImpulse: Bool     { didSet { Self.d.set(logImpulse, forKey: "logImpulse") } }
+    /// Wording of the prompt after the command is read.
+    @Published var readyPrompt: ReadyPrompt {
+        didSet { Self.d.set(readyPrompt.rawValue, forKey: "readyPrompt") }
+    }
     /// Which of the two curated voices the examiner speaks with.
     @Published var voicePreference: Speaker.VoicePreference {
         didSet {
@@ -142,7 +178,13 @@ final class DrillEngine: ObservableObject {
             "blankingMs": 350.0, "maxRunSeconds": 30.0, "shuffle": false,
             "speakAloud": true, "readBackTime": true, "listenForVoice": true,
             "resultPause": 1.2, "refractoryMs": 300.0,
-            "magCapacities": AmmoState.defaultCapacities, "autoAdvanceOnEmpty": true
+            "magCapacities": AmmoState.defaultCapacities, "autoAdvanceOnEmpty": true,
+            // The gate ships OFF. Its ratio has never been measured against a
+            // real gunshot or a real holster, and a wrong value deletes shots
+            // silently — which is worse than the false holster shot it fixes.
+            // Turn on logging, shoot one string, then set it from the numbers.
+            "minThreshold": 0.0, "impulseGate": false, "impulseRatio": 6.0,
+            "logImpulse": true, "readyPrompt": ReadyPrompt.shooterReady.rawValue
         ])
         useRandomDelay = d.bool(forKey: "useRandomDelay")
         fixedDelay     = d.double(forKey: "fixedDelay")
@@ -157,6 +199,11 @@ final class DrillEngine: ObservableObject {
         listenForVoice = d.bool(forKey: "listenForVoice")
         magCapacities  = (d.array(forKey: "magCapacities") as? [Int]) ?? AmmoState.defaultCapacities
         autoAdvanceOnEmpty = d.bool(forKey: "autoAdvanceOnEmpty")
+        minThreshold   = d.double(forKey: "minThreshold")
+        impulseGate    = d.bool(forKey: "impulseGate")
+        impulseRatio   = d.double(forKey: "impulseRatio")
+        logImpulse     = d.bool(forKey: "logImpulse")
+        readyPrompt = ReadyPrompt(rawValue: d.string(forKey: "readyPrompt") ?? "") ?? .shooterReady
         voicePreference = Speaker.VoicePreference(
             rawValue: d.string(forKey: "voicePreference") ?? "") ?? .male
         ammo = .loaded((d.array(forKey: "magCapacities") as? [Int]) ?? AmmoState.defaultCapacities)
@@ -167,8 +214,15 @@ final class DrillEngine: ObservableObject {
         audio.onLevel = { [weak self] p in
             Task { @MainActor in self?.level = p }
         }
-        audio.onDetect = { [weak self] host in
-            Task { @MainActor in self?.deliverDetection(host) }
+        audio.onDetect = { [weak self] host, ratio in
+            Task { @MainActor in self?.deliverDetection(host, ratio: ratio) }
+        }
+        audio.onReject = { [weak self] ratio in
+            Task { @MainActor in
+                guard let self, self.logImpulse else { return }
+                self.log("", String(format: "ignored — impulse %.1f× (gate %.1f×)",
+                                    ratio, self.impulseRatio))
+            }
         }
         // Captured directly, not through `self`: this runs on the audio render
         // thread and must not touch main-actor state.
@@ -260,15 +314,39 @@ final class DrillEngine: ObservableObject {
         hint = ""
         expectedShots = .fixed(1)
         liveShots = []
+        queuedCount = 0
         commandText = "Session stopped."
         log("EXAM", "Session ended.")
+    }
+
+    // MARK: - Queued-state controls
+    //
+    // All three are legal only while queued. Advancing the running order or
+    // re-loading every magazine in the middle of a timed string would corrupt
+    // the run, so the guard is here rather than in the view.
+
+    func queuedNext() { guard canGoNext else { return }; answer(.nextTask) }
+    func queuedPrev() { guard canGoPrev else { return }; answer(.prevTask) }
+
+    /// REFILL — top every magazine back up to its configured capacity and go
+    /// back to magazine one, un-retiring the ones already swapped past.
+    ///
+    /// Queued state only. This is the shooter off the clock, picking their
+    /// magazines up off the ground and refilling them. It is a different verb
+    /// from RELOAD (`reloadNow`) on purpose: refilling the magazines is not
+    /// reloading the gun, and the two must never be reachable from the same
+    /// phase or they will be pressed interchangeably.
+    func refillAll() {
+        guard phase == "queued" else { return }
+        ammo.refill(to: magCapacities)
+        log("EXAM", "Refill — \(magCapacities.prefix(3).map(String.init).joined(separator: " / ")).")
     }
 
     /// Manual fallback for the end of a string — always available.
     func stopString() {
         guard phase == "timing" else { return }
         manualEndRequested = true
-        deliverDetection(AudioCore.now())
+        deliverDetection(AudioCore.now(), ratio: 0)
     }
 
     func answer(_ cmd: DrillCommand) {
@@ -281,17 +359,27 @@ final class DrillEngine: ObservableObject {
         }
     }
 
-    /// Swap in the next magazine.
+    /// RELOAD — swap the magazine in the gun for the next one. Timed string
+    /// only, and a button only.
     ///
-    /// When this arrived by voice, the shooter's own "reloading" almost
-    /// certainly tripped the amplitude detector a moment earlier and was counted
-    /// as a shot, because the detector hears loudness and not words. Un-count
-    /// it. This is a heuristic — a genuine shot fired inside the window would be
-    /// removed instead. The on-screen button skips this correction entirely.
+    /// Timed only because reloading the gun is something you do on the clock;
+    /// between drills the operation you want is REFILL (`refillAll`), which is
+    /// a different verb and lives in a different phase so the two can never be
+    /// confused for one another.
+    ///
+    /// Button only because there is no voice "reload" and there must not be
+    /// one. The shout itself crosses the amplitude threshold and is counted as
+    /// a shot, because the detector hears loudness and not words. The
+    /// retroactive un-count that once compensated for that could delete a
+    /// genuine shot fired inside the window, so the command and the heuristic
+    /// were both removed.
     func reloadNow() {
+        guard phase == "timing" else { return }
+
         // A reload with rounds still in the gun is a tactical reload (or a
-        // ditched magazine after a malfunction). It is allowed at any time, and
-        // the abandoned rounds are gone — that magazine is never used again.
+        // ditched magazine after a malfunction). The abandoned rounds are gone
+        // — that magazine is on the ground and is never used again this string.
+        // REFILL is what puts them back, and only between drills.
         let abandoned = ammo.roundsInCurrent
 
         guard ammo.reload() else {
@@ -302,7 +390,7 @@ final class DrillEngine: ObservableObject {
         var line = "Reload — magazine \(mag?.id ?? 0), \(mag?.rounds ?? 0) rounds."
         if abandoned > 0 { line += " \(abandoned) abandoned." }
         log("EXAM", line)
-        if let t0 = runT0, phase == "timing" {
+        if let t0 = runT0 {
             runReloads.append(AudioCore.elapsed(from: t0, to: AudioCore.now()))
         }
     }
@@ -329,7 +417,27 @@ final class DrillEngine: ObservableObject {
         var i = 0
         var lastShotIndex: Int?
 
-        while i < order.count, alive(gen) {
+        // Every task is entered through the queued state, including a task being
+        // re-run after a do-over. Nothing is armed and nothing is spoken until
+        // the shooter says Start, so the gun can be holstered, the magazines
+        // topped off, or the drill skipped, without the clock caring.
+        sessionLoop: while alive(gen) {
+            if order.isEmpty || i >= order.count { break sessionLoop }
+            if i < 0 { i = 0 }
+
+            switch await awaitQueued(tasks[order[i]], number: i + 1, total: order.count, gen: gen) {
+            case .aborted:
+                return
+            case .next:
+                i = min(i + 1, order.count - 1)     // clamps: no wrap at the ends
+                continue sessionLoop
+            case .prev:
+                i = max(i - 1, 0)
+                continue sessionLoop
+            case .start:
+                break
+            }
+
             switch await runTask(tasks[order[i]], number: i + 1, total: order.count, gen: gen) {
             case .stopped:
                 return
@@ -350,10 +458,51 @@ final class DrillEngine: ObservableObject {
         phase = "idle"
         hint = ""
         expectedShots = .fixed(1)
+        queuedCount = 0
         if !aborted {
             commandText = "Session complete."
             await speaker.say("Session complete.")
         }
+    }
+
+    private enum QueuedOutcome { case start, next, prev, aborted }
+
+    /// Holds before a drill until the shooter says Start, or arrows away.
+    ///
+    /// Nothing is spoken here on purpose. The examiner reading the command is
+    /// step 1, and the whole point of this state is that the shooter controls
+    /// when that happens — so the drill is shown, not read.
+    private func awaitQueued(_ task: DrillTask, number: Int, total: Int,
+                             gen: Int) async -> QueuedOutcome {
+        phase = "queued"
+        commandText = task.text
+        hint = "task \(number) of \(total) · \(task.shotsLabel) · “start”"
+        queuedIndex = number - 1
+        queuedCount = total
+        verdict = ""
+        transcript = ""
+        timerText = "0.00"
+        timerTint = .neutral
+        liveShots = []
+        expectedShots = task.shots
+
+        while alive(gen) {
+            let result: InputResult = await withCheckedContinuation { c in
+                self.inputContinuation = c
+                if listenForVoice { voice.start(mode: .queued) }
+            }
+            voice.stop()
+            switch result {
+            case .aborted:                 return .aborted
+            case .command(.start):         return .start
+            case .command(.nextTask):      return .next
+            case .command(.prevTask):      return .prev
+            // Nothing else can arrive: `.queued` mode classifies only "start"
+            // and never reports an unrecognised utterance. Keep waiting.
+            default:                       continue
+            }
+        }
+        return .aborted
     }
 
     private func runTask(_ task: DrillTask, number: Int, total: Int, gen: Int) async -> TaskOutcome {
@@ -376,8 +525,8 @@ final class DrillEngine: ObservableObject {
             await speaker.say(task.text)
             if !alive(gen) { return .stopped }
 
-            log("EXAM", "Shooter ready?")
-            await speaker.say("Shooter ready?")
+            log("EXAM", readyPrompt.spoken)
+            await speaker.say(readyPrompt.spoken)
             if !alive(gen) { return .stopped }
 
             phase = "awaiting reply"
@@ -440,7 +589,10 @@ final class DrillEngine: ObservableObject {
         try? await Task.sleep(for: .seconds(max(0.35, delay - 0.30)))
         if !alive(gen) { return .stopped }
         let noise = audio.endCalibration()
-        let threshold = min(0.95, max(0.015, max(noise * 6, 0.06) / Float(sensitivity)))
+        // The floor is applied AFTER the sensitivity divisor, so it is a real
+        // floor and not just another term the divisor can undo.
+        let calibrated = max(0.015, max(noise * 6, 0.06) / Float(sensitivity))
+        let threshold = min(0.95, max(calibrated, Float(minThreshold)))
 
         let scheduled = audio.scheduleBuzz(lead: 0.30)
 
@@ -463,7 +615,7 @@ final class DrillEngine: ObservableObject {
         }
 
         phase = "timing"
-        hint = "\(task.shotsLabel) · “reload” · “do over”"
+        hint = "\(task.shotsLabel) · RELOAD · “do over”"
         startTicker(from: t0)
 
         runShotHosts = []
@@ -475,10 +627,12 @@ final class DrillEngine: ObservableObject {
         pendingDetections.removeAll()
         audio.arm(fromHost: t0 &+ AudioCore.secToHost(blankingMs / 1000),
                   threshold: threshold,
-                  refractory: max(0.02, refractoryMs / 1000))
-        // Only "do over" and "reload" are heard here. "Bang" and "Rack" need no
-        // recognition at all — they are counted because they are loud, which is
-        // why a malfunction clearance costs a round exactly like a shot does.
+                  refractory: max(0.02, refractoryMs / 1000),
+                  impulse: impulseGate ? Float(impulseRatio) : 0)
+        // "Do over" is the only thing heard here. Reload is the button beside
+        // it, never a word. "Bang" and "Rack" need no recognition at all — they
+        // are counted because they are loud, which is why a malfunction
+        // clearance costs a round exactly like a shot does.
         if listenForVoice { voice.start(mode: .doOverOnly) }
 
         let deadline = AudioCore.now() &+ AudioCore.secToHost(maxRunSeconds)
@@ -651,6 +805,9 @@ final class DrillEngine: ObservableObject {
             case .command(.no):            return .no
             case .command(.repeatCommand): return .repeatCommand
             case .command(.doOver):        return .doOver
+            // start / next / prev are queued-state only and cannot be produced
+            // in `.answers` mode, but the switch has to be total.
+            case .command:                 continue
             case .unrecognized:
                 log("EXAM", "I don't understand.")
                 await speaker.say("I don't understand.")
@@ -693,7 +850,14 @@ final class DrillEngine: ObservableObject {
 
     /// A detection arrived from the audio thread. Hand it to whoever is waiting,
     /// or queue it so it isn't lost between two awaits.
-    private func deliverDetection(_ host: UInt64) {
+    ///
+    /// `ratio` is how impulsive the crossing was. It is logged rather than acted
+    /// on here — the gate itself lives on the audio thread, because a decision
+    /// made up here would already have lost the sample that justified it.
+    private func deliverDetection(_ host: UInt64, ratio: Float) {
+        if logImpulse, ratio > 0, phase == "timing" {
+            log("", String(format: "shot %d — impulse %.1f×", runShotHosts.count + 1, ratio))
+        }
         if detectContinuation != nil {
             resolveDetection(host)
         } else {
@@ -775,6 +939,9 @@ final class DrillEngine: ObservableObject {
         case .no: return "Pause"
         case .repeatCommand: return "Repeat command"
         case .doOver: return "Do over"
+        case .start: return "Start"
+        case .nextTask: return "Next drill"
+        case .prevTask: return "Previous drill"
         }
     }
 }

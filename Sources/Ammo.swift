@@ -59,12 +59,20 @@ struct AmmoState: Hashable {
         return true
     }
 
-    /// Undoes a `consume`. Used when a shot turns out to have been the shooter
-    /// saying "reloading", and when a voided run is re-run.
-    mutating func restoreRound() {
-        guard magazines.indices.contains(current) else { return }
-        magazines[current].rounds = min(magazines[current].capacity,
-                                        magazines[current].rounds + 1)
+    // No per-round undo: a voided run restores the whole `AmmoState` snapshot
+    // taken at T0 (see DrillEngine.ammoAtRunStart). The old `restoreRound`
+    // existed only for the removed voice-reload un-count heuristic.
+
+    /// Refills every magazine to the given capacities and goes back to magazine
+    /// one, un-retiring everything.
+    ///
+    /// This is the between-drills reload: the shooter is off the clock, has
+    /// picked their magazines up and topped them off. It is deliberately NOT
+    /// the same operation as `reload()`, which is the in-string magazine change
+    /// and can never un-retire anything — during a string, a magazine you have
+    /// swapped past is on the ground.
+    mutating func refill(to capacities: [Int]) {
+        self = .loaded(capacities)
     }
 
     /// Swaps in the next magazine. Returns false when there isn't one.

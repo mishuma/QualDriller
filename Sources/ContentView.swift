@@ -131,7 +131,24 @@ struct ContentView: View {
         VStack(spacing: 10) {
             // The buttons are a first-class path, not a fallback. Gloves, wind,
             // ear pro and a noisy bay all defeat speech recognition.
-            if engine.phase == "timing" {
+            if engine.phase == "queued" {
+                // The only phase with drill navigation or a reload. Nothing is
+                // armed and nothing has been read out, so moving around the
+                // list or refilling magazines here cannot corrupt a run.
+                VStack(spacing: 10) {
+                    HStack(spacing: 10) {
+                        ArrowButton(system: "chevron.left") { engine.queuedPrev() }
+                            .disabled(!engine.canGoPrev)
+                        BigButton(title: "START", tint: .green) { engine.answer(.start) }
+                        ArrowButton(system: "chevron.right") { engine.queuedNext() }
+                            .disabled(!engine.canGoNext)
+                    }
+                    // REFILL, not RELOAD. Refilling the magazines is not
+                    // reloading the gun, and the two live in different phases
+                    // so they can never be pressed interchangeably.
+                    BigButton(title: "REFILL", tint: .teal) { engine.refillAll() }
+                }
+            } else if engine.phase == "timing" {
                 HStack(spacing: 10) {
                     BigButton(title: "STOP", tint: .red) { engine.stopString() }
                     BigButton(title: "RELOAD", tint: .teal) { engine.reloadNow() }
@@ -147,20 +164,11 @@ struct ContentView: View {
                     BigButton(title: "REPEAT", tint: .blue) { engine.answer(.repeatCommand) }
                 }
             } else if engine.phase == "result" || engine.phase == "ready for next" {
-                HStack(spacing: 10) {
-                    BigButton(title: "DO OVER", tint: .purple) { engine.answer(.doOver) }
-                    BigButton(title: "RELOAD", tint: .teal) { engine.reloadNow() }
-                }
+                BigButton(title: "DO OVER", tint: .purple) { engine.answer(.doOver) }
             } else {
-                HStack(spacing: 10) {
-                    BigButton(title: engine.isRunning ? "RUNNING" : "START",
-                              tint: .accentColor) { engine.start() }
-                        .disabled(engine.isRunning || engine.tasks.isEmpty)
-                    if !engine.isRunning {
-                        BigButton(title: "RELOAD", tint: .teal) { engine.reloadNow() }
-                            .disabled(!engine.ammo.hasSpareMagazine)
-                    }
-                }
+                BigButton(title: engine.isRunning ? "RUNNING" : "START SESSION",
+                          tint: .accentColor) { engine.start() }
+                    .disabled(engine.isRunning || engine.tasks.isEmpty)
             }
 
             // Always present, in every phase — no hunting for it mid-drill.
@@ -192,6 +200,23 @@ private struct BigButton: View {
         }
         .buttonStyle(.borderedProminent)
         .tint(tint)
+    }
+}
+
+/// Fixed-width so that Start keeps the same size and position whether or not
+/// the arrows are usable — the shooter should not have to re-find it.
+private struct ArrowButton: View {
+    let system: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: system)
+                .font(.title3.weight(.bold))
+                .frame(width: 58, height: 56)
+        }
+        .buttonStyle(.bordered)
+        .tint(.gray)
     }
 }
 
@@ -357,6 +382,41 @@ private struct SettingsView: View {
                 }
 
                 Section {
+                    VStack(alignment: .leading) {
+                        Text(engine.minThreshold <= 0
+                             ? "Minimum level: off"
+                             : String(format: "Minimum level: %.2f", engine.minThreshold))
+                        Slider(value: $engine.minThreshold, in: 0...0.9, step: 0.05)
+                    }
+                    Toggle("Require a sharp attack", isOn: $engine.impulseGate)
+                    if engine.impulseGate {
+                        VStack(alignment: .leading) {
+                            Text(String(format: "Attack ratio: %.1f×", engine.impulseRatio))
+                            Slider(value: $engine.impulseRatio, in: 2...30, step: 0.5)
+                        }
+                    }
+                    Toggle("Log attack ratios", isOn: $engine.logImpulse)
+                } header: {
+                    Text("Rejecting holster noise")
+                } footer: {
+                    Text("Drawing and reholstering are loud enough to cross the threshold and be "
+                       + "counted as a shot, which ruins the first-shot time on every “from the "
+                       + "holster” drill.\n\n"
+                       + "Minimum level is the blunt fix: a gunshot at the microphone is close to "
+                       + "full scale, a holster is not. Try 0.40–0.60 for live fire. Too high and "
+                       + "real shots go missing, so raise it a step at a time.\n\n"
+                       + "Attack ratio is the sharp fix: it compares each loud moment with the "
+                       + "sound just before it. A gunshot goes from nothing to everything inside a "
+                       + "millisecond; a holster draw ramps up. It is OFF by default because a "
+                       + "shouted “Bang!” ramps up too and would be rejected with it — this is a "
+                       + "live-fire setting, not a dry-practice one, and the right number has not "
+                       + "been measured yet.\n\n"
+                       + "Leave logging on for one range session, then read the ratios out of the "
+                       + "session log below: shots and holster noise will fall into two groups. "
+                       + "Set the ratio between them.")
+                }
+
+                Section {
                     ForEach(0..<3, id: \.self) { i in
                         Stepper("Magazine \(i + 1): \(engine.magCapacities.count > i ? engine.magCapacities[i] : 0) rounds",
                                 value: Binding(
@@ -373,13 +433,34 @@ private struct SettingsView: View {
                 } header: {
                     Text("Ammunition")
                 } footer: {
-                    Text("Magazines are filled at the start of each session and deplete across "
-                       + "every drill, in order 1 → 2 → 3. A magazine you reload past is never "
-                       + "used again, even with rounds left in it — that is a tactical reload, "
-                       + "and it is allowed at any time.\n\n"
+                    Text("Two different operations, deliberately kept apart:\n\n"
+                       + "RELOAD, on the clock, swaps the magazine in the gun for the next one. "
+                       + "Magazines go 1 → 2 → 3 and a magazine you reload past is on the ground "
+                       + "— it is never used again this string, even with rounds left in it. "
+                       + "That is a tactical reload.\n\n"
+                       + "REFILL, between drills, tops all three magazines back up and goes back "
+                       + "to magazine 1. That is you picking them up and refilling them.\n\n"
                        + "Every loud event costs a round: a shot fires one, a rack ejects one. "
                        + "Auto-swap moves to the next magazine when the current one runs dry, so "
-                       + "live fire doesn't need you to call each reload out loud.")
+                       + "live fire doesn't need you to reach for RELOAD on drills that simply "
+                       + "run to empty.")
+                }
+
+                Section {
+                    Picker("After the command", selection: $engine.readyPrompt) {
+                        ForEach(DrillEngine.ReadyPrompt.allCases) { p in
+                            Text(p.title).tag(p)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                } header: {
+                    Text("Ready prompt")
+                } footer: {
+                    Text("What the examiner says once the command has been read. Either way the "
+                       + "drill still waits for “yes” or the Yes button before the buzzer.\n\n"
+                       + "Several drills in the built-in list already end with “Standby.” in their "
+                       + "own text — with this set to Standby the examiner will say it twice. "
+                       + "Trim it from those lines if you switch.")
                 }
 
                 Section {

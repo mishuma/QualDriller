@@ -386,11 +386,11 @@ final class DrillEngine: ObservableObject {
     func reloadNow() {
         guard phase == "timing" else { return }
 
-        // A reload with rounds still in the gun is a tactical reload (or a
-        // ditched magazine after a malfunction). The abandoned rounds are gone
-        // — that magazine is on the ground and is never used again this string.
-        // REFILL is what puts them back, and only between drills.
-        let abandoned = ammo.roundsInCurrent
+        // A reload with rounds still in the gun is a tactical reload: you take
+        // the fullest magazine you have and RETAIN the partial, which goes back
+        // on the belt and can be shot later. It costs time, not ammunition.
+        let outgoing = ammo.currentMagazine
+        let retained = ammo.roundsInCurrent
 
         guard ammo.reload() else {
             log("EXAM", "No magazines remaining.")
@@ -398,7 +398,9 @@ final class DrillEngine: ObservableObject {
         }
         let mag = ammo.currentMagazine
         var line = "Reload — magazine \(mag?.id ?? 0), \(mag?.rounds ?? 0) rounds."
-        if abandoned > 0 { line += " \(abandoned) abandoned." }
+        if retained > 0 {
+            line += " Magazine \(outgoing?.id ?? 0) retained with \(retained)."
+        }
         log("EXAM", line)
         if let t0 = runT0 {
             runReloads.append(AudioCore.elapsed(from: t0, to: AudioCore.now()))

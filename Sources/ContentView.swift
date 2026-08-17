@@ -245,29 +245,29 @@ private struct ArrowButton: View {
     }
 }
 
-/// Magazines 1-3, left to right. The one in the gun is outlined; magazines
-/// already swapped past are struck through, because they are never used again
-/// this session even if rounds were left in them.
+/// Magazines 1-3, left to right. The one in the gun is outlined. Nothing is
+/// ever struck out: a magazine you swap away from keeps its rounds and goes
+/// back in the pool, so a partial sitting at 3 is still worth 3 shots later.
 private struct MagazineBar: View {
     let ammo: AmmoState
 
     var body: some View {
         HStack(spacing: 10) {
             ForEach(ammo.magazines) { mag in
-                let isCurrent = mag.id - 1 == ammo.current && !mag.retired
+                let isCurrent = mag.id - 1 == ammo.current
                 let dry = isCurrent && mag.isEmpty
                 let accent: Color = dry ? .red : .teal
                 HStack(spacing: 5) {
                     Text("MAG \(mag.id)")
                         .font(.system(size: 10, weight: .semibold)).tracking(0.5)
-                    Text(mag.retired ? "—" : dry ? "EMPTY" : "\(mag.rounds)")
+                    Text(dry ? "EMPTY" : "\(mag.rounds)")
                         .font(.system(.subheadline, design: .rounded).weight(.bold))
                         .monospacedDigit()
                 }
-                .foregroundStyle(mag.retired ? AnyShapeStyle(.tertiary)
-                                 : dry ? AnyShapeStyle(Color.red)
-                                 : isCurrent ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
-                .strikethrough(mag.retired)
+                .foregroundStyle(dry ? AnyShapeStyle(Color.red)
+                                 : isCurrent ? AnyShapeStyle(.primary)
+                                 : mag.isEmpty ? AnyShapeStyle(.tertiary)
+                                 : AnyShapeStyle(.secondary))
                 .padding(.horizontal, 9).padding(.vertical, 5)
                 .background {
                     RoundedRectangle(cornerRadius: 7)
@@ -456,11 +456,15 @@ private struct SettingsView: View {
                        + "a shot — shout “reload”, or shout anything, and it counts as the "
                        + "reload. No button and no words to get right. The clock never stops, so "
                        + "the reload costs you time exactly as it does on the line.\n\n"
-                       + "RELOAD, on the clock, is still there for a tactical reload — swapping "
-                       + "with rounds still in the magazine, which the app can't guess at. The "
-                       + "magazine you leave behind is on the ground and is not used again this "
-                       + "string. REFILL, between drills, tops all three back up and returns to "
-                       + "magazine 1: that's you picking them up.\n\n"
+                       + "A reload always brings in the magazine with the MOST rounds, which is "
+                       + "what you want both times you reload: a tactical reload wants a full "
+                       + "magazine, and running dry just wants whatever still has rounds in it. "
+                       + "The magazine you swap out keeps its rounds and goes back on the belt — "
+                       + "a tactical reload costs you time, not ammunition, and you can shoot "
+                       + "that partial later once the full ones are gone.\n\n"
+                       + "RELOAD, on the clock, is there for a tactical reload — swapping with "
+                       + "rounds still in the gun, which the app can't guess at. REFILL, between "
+                       + "drills, tops all three back up to the loadout in force.\n\n"
                        + "One catch: the mic is deafened while the examiner speaks, because its "
                        + "voice comes out of the same speaker and would be counted as a shout. "
                        + "A shot during the call is not heard. You're reloading, so it shouldn't "

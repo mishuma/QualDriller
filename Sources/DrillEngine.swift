@@ -60,6 +60,11 @@ final class DrillEngine: ObservableObject {
     /// of a stage cannot silently put you back on the previous stage's ammo.
     @Published private(set) var activeLoadout: [Int] = AmmoState.defaultCapacities
 
+    /// Nothing left in any magazine. The session does not end — it waits for a
+    /// REFILL, because being out of ammunition is a thing that happens between
+    /// drills and is fixed in seconds, not a reason to throw away the results.
+    var outOfAmmo: Bool { ammo.totalRemaining <= 0 }
+
     var canGoNext: Bool { phase == "queued" && queuedIndex + 1 < queuedCount }
     var canGoPrev: Bool { phase == "queued" && queuedIndex > 0 }
 
@@ -514,7 +519,8 @@ final class DrillEngine: ObservableObject {
         commandText = task.text
         var queuedHint = "task \(number) of \(total) · \(task.shotsLabel)"
         if let r = task.refillLabel { queuedHint += " · \(r)" }
-        hint = queuedHint + " · “start”"
+        hint = outOfAmmo ? queuedHint + " · OUT OF AMMUNITION — REFILL"
+                         : queuedHint + " · “start”"
         queuedIndex = number - 1
         queuedCount = total
         verdict = ""
@@ -532,7 +538,17 @@ final class DrillEngine: ObservableObject {
             voice.stop()
             switch result {
             case .aborted:                 return .aborted
-            case .command(.start):         return .start
+            case .command(.start):
+                // The one gate on starting a drill. Refusing here rather than
+                // at the buzzer means the shooter finds out while he is stood
+                // in front of the phone with REFILL on screen, not after the
+                // command has been read out to him.
+                guard !outOfAmmo else {
+                    log("EXAM", "Out of ammunition. Refill to continue.")
+                    await speaker.say("Out of ammunition. Refill to continue.")
+                    continue
+                }
+                return .start
             case .command(.nextTask):      return .next
             case .command(.prevTask):      return .prev
             // Nothing else can arrive: `.queued` mode classifies only "start"
@@ -607,18 +623,11 @@ final class DrillEngine: ObservableObject {
         voice.stop()
 
         // ---- step 4: delay, buzzer, timed string ---------------------------
-        // Ending here beats letting the shooter stand through a 30 s timeout
-        // with an empty gun.
-        if ammo.totalRemaining <= 0 {
-            phase = "out of ammunition"
-            hint = "all magazines spent — End Session or restart"
-            commandText = "Out of ammunition."
-            log("EXAM", "Out of ammunition.")
-            await speaker.say("Out of ammunition.")
-            aborted = true
-            return .stopped
-        }
-
+        // No ammunition check here. Every task is entered through the queued
+        // state, which refuses to start a drill with empty magazines, so by the
+        // time we reach the buzzer there is something to shoot. This used to
+        // end the whole SESSION on an empty belt, throwing away the results
+        // over something a REFILL fixes in two seconds.
         let delay = useRandomDelay ? Double.random(in: 2.0...4.0) : max(0.6, fixedDelay)
         phase = "standby"
         hint = "wait for the buzzer · \(task.shotsLabel)"
@@ -754,6 +763,11 @@ final class DrillEngine: ObservableObject {
             runShotHosts.append(t)
             runShotConsumed.append(consumed)
             liveShots = runShotHosts.map { AudioCore.elapsed(from: t0, to: $0) }
+
+            // That was the last round on the belt. An empty gun cannot fire, so
+            // there is nothing further to hear and the string is over — short,
+            // if the drill wanted more, which is the honest score.
+            if ammo.totalRemaining <= 0 { break }
             // Log the round count with every shot. When the app and the shooter
             // disagree about how many rounds are left, a "mag" drill waits for a
             // shot that is never coming and dies on the timeout — this is the

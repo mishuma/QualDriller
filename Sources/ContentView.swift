@@ -150,13 +150,15 @@ struct ContentView: View {
                         ArrowButton(system: "chevron.left") { engine.queuedPrev() }
                             .disabled(!engine.canGoPrev)
                         BigButton(title: "START", tint: .green) { engine.answer(.start) }
+                            .disabled(engine.outOfAmmo)
                         ArrowButton(system: "chevron.right") { engine.queuedNext() }
                             .disabled(!engine.canGoNext)
                     }
                     // REFILL, not RELOAD. Refilling the magazines is not
                     // reloading the gun, and the two live in different phases
                     // so they can never be pressed interchangeably.
-                    BigButton(title: "REFILL", tint: .teal) { engine.refillAll() }
+                    BigButton(title: engine.outOfAmmo ? "REFILL TO CONTINUE" : "REFILL",
+                              tint: engine.outOfAmmo ? .orange : .teal) { engine.refillAll() }
                 }
             } else if engine.phase == "timing" {
                 HStack(spacing: 10) {

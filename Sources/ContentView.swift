@@ -205,18 +205,33 @@ private struct BigButton: View {
 
 /// Fixed-width so that Start keeps the same size and position whether or not
 /// the arrows are usable — the shooter should not have to re-find it.
+///
+/// Explicitly filled rather than `.bordered`. A bordered button tints its fill
+/// at roughly 15% opacity, and grey at 15% over this screen's near-black
+/// background is invisible in daylight — which is exactly where this app is
+/// used. Everything here is drawn, not inherited.
 private struct ArrowButton: View {
     let system: String
     let action: () -> Void
+    @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
         Button(action: action) {
             Image(systemName: system)
-                .font(.title3.weight(.bold))
-                .frame(width: 58, height: 56)
+                .font(.system(size: 22, weight: .heavy))
+                .foregroundStyle(isEnabled ? Color.white : Color(white: 0.35))
+                .frame(width: 62, height: 56)
+                .background {
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color(white: isEnabled ? 0.26 : 0.12))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 10)
+                                .strokeBorder(Color(white: isEnabled ? 0.55 : 0.20),
+                                              lineWidth: 1.5)
+                        }
+                }
         }
-        .buttonStyle(.bordered)
-        .tint(.gray)
+        .buttonStyle(.plain)
     }
 }
 
@@ -430,6 +445,12 @@ private struct SettingsView: View {
                                 in: 0...AmmoState.maxRounds)
                     }
                     Toggle("Auto-swap when dry", isOn: $engine.autoAdvanceOnEmpty)
+                    if engine.autoAdvanceOnEmpty {
+                        Label("“Empty mag. Reload!” is not called while auto-swap is on.",
+                              systemImage: "info.circle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 } header: {
                     Text("Ammunition")
                 } footer: {
@@ -440,10 +461,18 @@ private struct SettingsView: View {
                        + "That is a tactical reload.\n\n"
                        + "REFILL, between drills, tops all three magazines back up and goes back "
                        + "to magazine 1. That is you picking them up and refilling them.\n\n"
-                       + "Every loud event costs a round: a shot fires one, a rack ejects one. "
-                       + "Auto-swap moves to the next magazine when the current one runs dry, so "
-                       + "live fire doesn't need you to reach for RELOAD on drills that simply "
-                       + "run to empty.")
+                       + "Every loud event costs a round: a shot fires one, a rack ejects one.\n\n"
+                       + "The two settings below answer the same question in opposite ways, so "
+                       + "pick one. With auto-swap ON the app moves to the next magazine by "
+                       + "itself and says nothing — good for drills that simply run to empty. "
+                       + "With it OFF the examiner calls “Empty mag. Reload!” the moment the gun "
+                       + "runs dry and waits for you to press RELOAD. The clock keeps running "
+                       + "through the call either way.\n\n"
+                       + "One catch worth knowing: the microphone is deafened while that line is "
+                       + "spoken, because the examiner's voice comes out of the same speaker and "
+                       + "would otherwise be counted as a shot. A shot fired during the call is "
+                       + "not detected. You are reloading, so it should not come up — but that "
+                       + "is the reason if it ever does.")
                 }
 
                 Section {

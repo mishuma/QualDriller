@@ -669,6 +669,20 @@ final class DrillEngine: ObservableObject {
             runShotConsumed.append(consumed)
             liveShots = runShotHosts.map { AudioCore.elapsed(from: t0, to: $0) }
             if manualEndRequested { break }
+
+            // Went dry with a magazine still on the belt. Call it. The clock
+            // keeps running — on a real line the timer runs straight through a
+            // reload — and the string does not end; it resumes when the shooter
+            // presses RELOAD and fires again.
+            //
+            // Skipped when auto-swap is on, because then the app has already
+            // reloaded for him and "Reload!" would be a lie. Skipped when the
+            // string is already over on its own terms (a "mag" drill ends here).
+            if consumed, ammo.roundsInCurrent == 0, ammo.hasSpareMagazine,
+               !autoAdvanceOnEmpty, !stringComplete(), alive(gen) {
+                await announceEmptyMagazine()
+                if !alive(gen) { break }
+            }
         }
 
         audio.disarm()
@@ -780,6 +794,31 @@ final class DrillEngine: ObservableObject {
         }
 
         return .completed
+    }
+
+    /// "Empty mag. Reload!", spoken while the clock is still running.
+    ///
+    /// This is the ONE audible cue allowed inside a timed string, and it is only
+    /// safe because the detector is deafened for exactly as long as the line
+    /// takes. The examiner's voice leaves the same speaker the microphone is
+    /// listening to, at volume 1.0, in `.measurement` mode with no echo
+    /// cancellation — untreated it crosses the threshold and is counted as one
+    /// or more shots. That is why there was no empty-magazine cue before this,
+    /// and why a plain tone still must never be added.
+    ///
+    /// The cost is real and cannot be designed away: a shot fired DURING the
+    /// call is not detected. The shooter is reloading through that window,
+    /// which is what makes the trade acceptable — but if he starts hearing the
+    /// call swallow a shot, this is the reason.
+    ///
+    /// The timer is untouched. `stopTicker` is not called and T0 does not move,
+    /// so the reload costs the shooter time exactly as it does on the line.
+    private func announceEmptyMagazine() async {
+        audio.setBlanking(untilHost: AudioCore.now() &+ AudioCore.secToHost(30))
+        log("EXAM", "Empty mag. Reload!")
+        await speaker.say("Empty mag. Reload!")
+        // Short tail: the room is still settling from the last syllable.
+        audio.setBlanking(untilHost: AudioCore.now() &+ AudioCore.secToHost(0.12))
     }
 
     /// A do-over means the attempt did not count: drop its recorded result and

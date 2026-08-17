@@ -256,6 +256,17 @@ final class AudioCore {
         os_unfair_lock_lock(&lock); armed = false; os_unfair_lock_unlock(&lock)
     }
 
+    /// Moves the blanking window, in either direction, without disturbing the
+    /// armed flag, the threshold or the refractory time.
+    ///
+    /// This is how the examiner is allowed to speak during a timed string: push
+    /// the window far out, say the line, pull it back. Disarming instead would
+    /// lose the refractory state, and stopping the engine would move T0's
+    /// acoustic reference out from under the run.
+    func setBlanking(untilHost: UInt64) {
+        os_unfair_lock_lock(&lock); armAtHost = untilHost; os_unfair_lock_unlock(&lock)
+    }
+
     var activeThreshold: Float {
         os_unfair_lock_lock(&lock); let t = threshold; os_unfair_lock_unlock(&lock); return t
     }

@@ -277,8 +277,5 @@ QualDriller/
 
 ## License
 
-Not yet chosen. Until a licence file is added, all rights are reserved by
-default and you do not have permission to copy, modify or redistribute this
-code. If you want it to be usable, add a `LICENSE` file — MIT and Apache-2.0
-are the usual choices, and Apache-2.0 includes an explicit patent grant and a
-warranty disclaimer.
+MIT — see [`LICENSE`](LICENSE). Provided as-is, without warranty of any kind.
+See the safety notice above: that disclaimer is not boilerplate here.

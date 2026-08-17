@@ -119,6 +119,11 @@ final class DrillEngine: ObservableObject {
     /// room's noise floor, which lands well below a shout and well within reach
     /// of a draw. Costs nothing in timing accuracy.
     @Published var minThreshold: Double { didSet { Self.d.set(minThreshold, forKey: "minThreshold") } }
+    /// How long a sound must last before it counts as a shot. This is what
+    /// separates a shout from a holster draw: a draw or a reholster is a
+    /// mechanical transient over in tens of milliseconds, and a person cannot
+    /// say anything that briefly.
+    @Published var minSoundMs: Double { didSet { Self.d.set(minSoundMs, forKey: "minSoundMs") } }
     /// Wording of the prompt after the command is read.
     @Published var readyPrompt: ReadyPrompt {
         didSet { Self.d.set(readyPrompt.rawValue, forKey: "readyPrompt") }
@@ -183,6 +188,9 @@ final class DrillEngine: ObservableObject {
     private var pendingDetections: [UInt64] = []
 
     private var ticker: Task<Void, Never>?
+    /// Whether the command now being delivered arrived by voice. Spoken "next"
+    /// runs the next drill; the arrow button only selects it.
+    private var lastCommandWasVoice = false
     private var manualEndRequested = false
     private var doOverRequested = false
 
@@ -217,7 +225,8 @@ final class DrillEngine: ObservableObject {
             "speakAloud": true, "readBackTime": true, "listenForVoice": true,
             "resultPause": 1.2, "refractoryMs": 300.0,
             "magCapacities": AmmoState.defaultCapacities,
-            "minThreshold": 0.0, "readyPrompt": ReadyPrompt.shooterReady.rawValue
+            "minThreshold": 0.0, "readyPrompt": ReadyPrompt.shooterReady.rawValue,
+            "minSoundMs": 120.0
         ])
         useRandomDelay = d.bool(forKey: "useRandomDelay")
         fixedDelay     = d.double(forKey: "fixedDelay")
@@ -232,6 +241,7 @@ final class DrillEngine: ObservableObject {
         listenForVoice = d.bool(forKey: "listenForVoice")
         magCapacities  = (d.array(forKey: "magCapacities") as? [Int]) ?? AmmoState.defaultCapacities
         minThreshold   = d.double(forKey: "minThreshold")
+        minSoundMs     = d.double(forKey: "minSoundMs")
         readyPrompt = ReadyPrompt(rawValue: d.string(forKey: "readyPrompt") ?? "") ?? .shooterReady
         voicePreference = Speaker.VoicePreference(
             rawValue: d.string(forKey: "voicePreference") ?? "") ?? .male
@@ -254,6 +264,7 @@ final class DrillEngine: ObservableObject {
         }
         voice.onCommand = { [weak self] cmd in
             guard let self else { return }
+            self.lastCommandWasVoice = true
             self.log("YOU", Self.describe(cmd))
             if cmd == .doOver {
                 self.requestDoOver()
@@ -392,6 +403,7 @@ final class DrillEngine: ObservableObject {
     }
 
     func answer(_ cmd: DrillCommand) {
+        lastCommandWasVoice = false
         log("YOU", Self.describe(cmd) + "  (button)")
         if cmd == .doOver {
             requestDoOver()
@@ -473,12 +485,16 @@ final class DrillEngine: ObservableObject {
                                      loadout: loadout, gen: gen) {
             case .aborted:
                 return
-            case .next:
-                i = min(i + 1, order.count - 1)     // clamps: no wrap at the ends
-                continue sessionLoop
-            case .prev:
-                i = max(i - 1, 0)
-                continue sessionLoop
+            case .move(let delta, let thenRun):
+                let moved = min(max(i + delta, 0), order.count - 1)
+                let crossesStage = TaskList.loadoutInForce(at: moved, order: order,
+                                                           tasks: tasks, base: magCapacities)
+                                 != loadout
+                i = moved
+                // Never run straight into a drill on the wrong ammunition. A
+                // stage change has to be seen and acknowledged, so crossing one
+                // always drops back into the queued state however you asked.
+                if !thenRun || crossesStage { continue sessionLoop }
             case .start:
                 break
             }
@@ -514,7 +530,9 @@ final class DrillEngine: ObservableObject {
         }
     }
 
-    private enum QueuedOutcome { case start, next, prev, aborted }
+    /// `move` carries whether the shooter wants that drill RUN, not merely
+    /// selected. Saying "next" means "run the next one"; the arrows only browse.
+    private enum QueuedOutcome { case start, move(delta: Int, thenRun: Bool), aborted }
 
     /// Holds before a drill until the shooter says Start, or arrows away.
     ///
@@ -554,9 +572,26 @@ final class DrillEngine: ObservableObject {
             queuedHint += " · re-stage \(loadout.prefix(3).map(String.init).joined(separator: "/"))"
         }
         hint = outOfAmmo ? queuedHint + " · OUT OF AMMUNITION — REFILL"
-                         : queuedHint + " · “start”"
+                         : queuedHint + " · “start” · “next” · “back”"
         queuedIndex = number - 1
         queuedCount = total
+
+        // Say it, don't only show it. Running dry between drills was previously
+        // a red pill and nothing else — no use at all to someone who is looking
+        // at a target rather than at the phone. Safe to speak here because
+        // nothing is armed and no clock is running.
+        if outOfAmmo {
+            log("EXAM", "Out of ammunition. Refill to continue.")
+            await speaker.say("Out of ammunition. Refill to continue.")
+        } else if ammo.roundsInCurrent == 0 {
+            log("EXAM", "Magazine empty. Reload.")
+            await speaker.say("Magazine empty. Reload.")
+        } else if needsRestage {
+            let l = loadout.prefix(3).map(String.init).joined(separator: ", ")
+            log("EXAM", "New stage. Re-stage magazines \(l).")
+            await speaker.say("New stage. Re-stage magazines \(l).")
+        }
+        if !alive(gen) { return .aborted }
         verdict = ""
         transcript = ""
         timerText = "0.00"
@@ -583,8 +618,8 @@ final class DrillEngine: ObservableObject {
                     continue
                 }
                 return .start
-            case .command(.nextTask):      return .next
-            case .command(.prevTask):      return .prev
+            case .command(.nextTask):      return .move(delta: 1, thenRun: lastCommandWasVoice)
+            case .command(.prevTask):      return .move(delta: -1, thenRun: lastCommandWasVoice)
             // Nothing else can arrive: `.queued` mode classifies only "start"
             // and never reports an unrecognised utterance. Keep waiting.
             default:                       continue
@@ -708,7 +743,8 @@ final class DrillEngine: ObservableObject {
         pendingDetections.removeAll()
         audio.arm(fromHost: t0 &+ AudioCore.secToHost(blankingMs / 1000),
                   threshold: threshold,
-                  refractory: max(0.02, refractoryMs / 1000))
+                  refractory: max(0.02, refractoryMs / 1000),
+                  minSound: max(0, minSoundMs / 1000))
         // "Do over" is the only thing heard here. Reload is the button beside
         // it, never a word. "Bang" and "Rack" need no recognition at all — they
         // are counted because they are loud, which is why a malfunction

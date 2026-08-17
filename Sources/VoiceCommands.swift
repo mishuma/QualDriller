@@ -9,9 +9,10 @@ enum DrillCommand {
     case doOver
     /// Leaves the queued state and reads the command. Voice or the Start button.
     case start
-    /// Queue the next / previous drill without shooting this one. Buttons only:
-    /// there is no voice form, because "next" and "back" are common enough in
-    /// range chatter to fire by accident.
+    /// Move to the next / previous drill. Spoken in the queued state these RUN
+    /// that drill; the on-screen arrows only move the selection, because if you
+    /// are looking at the screen you are browsing, and if you are talking to it
+    /// you want one utterance to do the whole thing.
     case nextTask
     case prevTask
 }
@@ -212,7 +213,12 @@ final class VoiceCommands {
         // that "start over" resolves to start rather than doOver. There is
         // nothing to do over here — the arrows are how you move between drills.
         if mode == .queued {
-            return has("start|go|ready|begin|let's go|lets go") ? .start : nil
+            // Order matters: "go back" contains "go", so the movement words are
+            // tested first or every "go back" would start the current drill.
+            if has("back|last|previous|go back") { return .prevTask }
+            if has("next|skip|forward")          { return .nextTask }
+            if has("start|go|ready|begin|let's go|lets go") { return .start }
+            return nil
         }
 
         // "do over" is checked first and is the only thing heard mid-string.

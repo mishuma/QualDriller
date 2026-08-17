@@ -399,6 +399,8 @@ private struct SettingsView: View {
                              : String(format: "Ignore quiet sounds: below %.2f", engine.minThreshold))
                         Slider(value: $engine.minThreshold, in: 0...0.9, step: 0.05)
                     }
+                    Stepper("Ignore sounds shorter than: \(Int(engine.minSoundMs)) ms",
+                            value: $engine.minSoundMs, in: 0...400, step: 10)
                     Stepper("Shout dead time: \(Int(engine.refractoryMs)) ms",
                             value: $engine.refractoryMs, in: 100...800, step: 10)
                     Stepper("Buzzer blanking: \(Int(engine.blankingMs)) ms",
@@ -416,8 +418,14 @@ private struct SettingsView: View {
                        + "buzzer, so a quiet room and a noisy one both work without touching "
                        + "anything. Sensitivity nudges that up or down.\n\n"
                        + "Ignore quiet sounds puts a hard floor under it, for when something in "
-                       + "the room keeps getting counted — a holster draw, a door, a dog. Raise "
-                       + "it one step at a time: too high and your own shouts stop registering.\n\n"
+                       + "the room keeps getting counted. Raise it one step at a time: too high "
+                       + "and your own shouts stop registering.\n\n"
+                       + "Ignore sounds shorter than is the better tool for a holster. Drawing "
+                       + "and reholstering are mechanical — loud, but over in a few tens of "
+                       + "milliseconds — and you cannot say anything that briefly. A sound now "
+                       + "has to LAST this long before it counts as a shot, and the time recorded "
+                       + "is still the moment it began, so nothing is delayed. Raise it if draws "
+                       + "still register; lower it if a short sharp “bang” gets missed.\n\n"
                        + "Shout dead time is how long the mic is ignored after each shout. One "
                        + "“bang” lasts 300–500 ms and would otherwise count as three or four "
                        + "shots, so this cannot go much below 300. It also means your splits "

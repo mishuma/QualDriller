@@ -72,6 +72,23 @@ final class AudioCore {
     /// True between reporting an event and the voice actually stopping. See the
     /// release gate in `process`.
     private var awaitingRelease = false
+    /// Minimum time a sound must persist to count. 0 disables. See `arm`.
+    private var minSoundHost: UInt64 = 0
+
+    // Candidate state — audio thread only. A crossing is not an event until it
+    // has lasted long enough; until then it is a candidate carrying the host
+    // time of its ONSET.
+    private var candidateActive = false
+    private var candidateOnset: UInt64 = 0
+    private var candidateAbove = 0
+    private var candidateGap = 0
+
+    /// A sound is still "going" while it stays above this fraction of the
+    /// trigger threshold. Well below the trigger so a wavering voice does not
+    /// break its own candidate.
+    private static let sustainFactor: Float = 0.5
+    /// A dip shorter than this doesn't end a candidate — speech has gaps.
+    private static let gapToleranceSeconds = 0.012
 
     /// How far the level must fall, as a fraction of the trigger threshold,
     /// before another event can be reported. Well below the threshold so a
@@ -143,6 +160,7 @@ final class AudioCore {
         let thr = threshold
         let armAt = armAtHost
         let wasAwaitingRelease = awaitingRelease
+        let minSound = minSoundHost
         os_unfair_lock_unlock(&lock)
 
         meterCount += 1
@@ -163,31 +181,73 @@ final class AudioCore {
         // will look at anything again. The dead time is now only a floor on how
         // close two separate shouts may be; the gate handles their length.
         if wasAwaitingRelease {
+            candidateActive = false
             if peak < thr * Self.releaseFactor {
                 os_unfair_lock_lock(&lock); awaitingRelease = false; os_unfair_lock_unlock(&lock)
             }
             return
         }
 
-        guard isArmed, peak >= thr else { return }
+        guard isArmed else { candidateActive = false; return }
+
+        // MINIMUM-DURATION GATE. A holster draw, a reholster, a dropped case or
+        // a door latch is a mechanical transient — loud, but over in tens of
+        // milliseconds. A person cannot say anything that briefly. So a
+        // crossing is only a candidate until it has PERSISTED long enough, and
+        // short sharp noises never become events at all.
+        //
+        // This is the opposite test from the impulse gate that was tried and
+        // deleted: that one rejected sounds for rising too slowly, which is
+        // exactly what a shout does. Rejecting sounds for being too SHORT costs
+        // a shout nothing, because a shout is 300-500 ms.
+        //
+        // The reported timestamp is the ONSET, held in candidateOnset, never
+        // the moment of confirmation — otherwise every shot would be late by
+        // the length of the gate and the timing contract would be broken.
+        let sustain = thr * Self.sustainFactor
+        let needed = minSound == 0 ? 1
+                   : Swift.max(1, Int(Self.hostToSec(minSound) * sr))
+        let gapLimit = Swift.max(1, Int(Self.gapToleranceSeconds * sr))
 
         for i in 0..<n {
-            guard Swift.abs(ch[i]) >= thr else { continue }
-            let t = base &+ Self.secToHost(Double(i) / sr)
-            if t < armAt { continue }              // still inside the blanking window
+            let a = Swift.abs(ch[i])
+
+            if candidateActive {
+                if a >= sustain {
+                    candidateAbove += 1
+                    candidateGap = 0
+                } else {
+                    candidateGap += 1
+                    if candidateGap > gapLimit { candidateActive = false; continue }
+                }
+                guard candidateAbove >= needed else { continue }
+            } else {
+                guard a >= thr else { continue }
+                let t = base &+ Self.secToHost(Double(i) / sr)
+                if t < armAt { continue }          // still inside the blanking window
+                candidateActive = true
+                candidateOnset = t
+                candidateAbove = 1
+                candidateGap = 0
+                guard candidateAbove >= needed else { continue }
+            }
+
+            // Confirmed.
+            let onset = candidateOnset
+            candidateActive = false
 
             os_unfair_lock_lock(&lock)
             awaitingRelease = true          // wait for the voice to stop
             if refractoryHost > 0 {
                 // Multi-shot: stay armed but go blind for at least the dead
                 // time, so two shouts close together still read as two.
-                armAtHost = t &+ refractoryHost
+                armAtHost = onset &+ refractoryHost
             } else {
                 armed = false
             }
             os_unfair_lock_unlock(&lock)
 
-            DispatchQueue.main.async { self.onDetect?(t) }
+            DispatchQueue.main.async { self.onDetect?(onset) }
             return                                  // at most one report per buffer
         }
     }
@@ -218,14 +278,21 @@ final class AudioCore {
     /// register as several shots, so ~0.30 s is right. It cannot usefully go
     /// much below that — the floor is how long a person takes to say a word,
     /// which also means shouted splits measure speech cadence and not shooting.
-    func arm(fromHost: UInt64, threshold thr: Float, refractory: Double = 0) {
+    /// `minSound` is how long a sound must persist before it counts at all.
+    /// It is what separates a shout from a holster draw — see the gate in
+    /// `process`. Pass 0 to disable it, which is what the buzzer arm wants:
+    /// T0 must never wait for a confirmation window.
+    func arm(fromHost: UInt64, threshold thr: Float,
+             refractory: Double = 0, minSound: Double = 0) {
         os_unfair_lock_lock(&lock)
         armed = true
         armAtHost = fromHost
         threshold = thr
         refractoryHost = refractory > 0 ? Self.secToHost(refractory) : 0
+        minSoundHost = minSound > 0 ? Self.secToHost(minSound) : 0
         awaitingRelease = false
         os_unfair_lock_unlock(&lock)
+        candidateActive = false
     }
 
     func disarm() {
@@ -233,6 +300,7 @@ final class AudioCore {
         armed = false
         awaitingRelease = false
         os_unfair_lock_unlock(&lock)
+        candidateActive = false
     }
 
     /// Moves the blanking window, in either direction, without disturbing the
@@ -244,6 +312,7 @@ final class AudioCore {
     /// acoustic reference out from under the run.
     func setBlanking(untilHost: UInt64) {
         os_unfair_lock_lock(&lock); armAtHost = untilHost; os_unfair_lock_unlock(&lock)
+        candidateActive = false     // anything half-heard is abandoned
     }
 
     var activeThreshold: Float {

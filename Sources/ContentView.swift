@@ -434,6 +434,18 @@ private struct SettingsView: View {
                                     }),
                                 in: 0...AmmoState.maxRounds)
                     }
+
+                    LabeledContent("Rounds per session", value: "\(engine.totalCapacity)")
+
+                    if !engine.overAmmoTasks.isEmpty {
+                        Label("Drill \(engine.overAmmoTasks.map(String.init).joined(separator: ", ")) "
+                            + "asks for more shots than \(engine.totalCapacity) rounds. "
+                            + "Those drills can never finish — fix the counts in the task file, "
+                            + "or put the magazines back.",
+                              systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
                 } header: {
                     Text("Ammunition")
                 } footer: {

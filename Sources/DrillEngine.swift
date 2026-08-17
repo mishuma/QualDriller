@@ -114,6 +114,30 @@ final class DrillEngine: ObservableObject {
         }
     }
 
+    /// Rounds a fresh session starts with, from the current settings. Clamped
+    /// the same way `AmmoState.loaded` clamps, so this is what you will
+    /// actually get and not what was typed.
+    var totalCapacity: Int {
+        magCapacities.prefix(AmmoState.maxMagazines)
+            .reduce(0) { $0 + min(AmmoState.maxRounds, max(0, $1)) }
+    }
+
+    /// Drill numbers whose shot count is larger than a whole session's
+    /// ammunition, so they can never complete.
+    ///
+    /// Counts that span a reload — "fire until empty, reload, two more" — are
+    /// written into the task file as a single number and are therefore derived
+    /// from the magazine capacities. Change the capacities in Settings and
+    /// those numbers quietly become unreachable: the drill runs to the silence
+    /// settle and scores SHORT every time, with nothing on screen explaining
+    /// why. This is what surfaces it.
+    var overAmmoTasks: [Int] {
+        tasks.enumerated().compactMap { i, t in
+            guard let n = t.shots.fixedValue, n > totalCapacity else { return nil }
+            return i + 1
+        }
+    }
+
     // MARK: - Collaborators
 
     let audio = AudioCore()

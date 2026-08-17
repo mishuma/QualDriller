@@ -69,6 +69,15 @@ final class AudioCore {
     private var calibrating = false
     private var noisePeak: Float = 0
     private var meterCount = 0
+    /// True between reporting an event and the voice actually stopping. See the
+    /// release gate in `process`.
+    private var awaitingRelease = false
+
+    /// How far the level must fall, as a fraction of the trigger threshold,
+    /// before another event can be reported. Well below the threshold so a
+    /// wavering shout does not re-trigger, well above the noise floor so the
+    /// gate always reopens.
+    private static let releaseFactor: Float = 0.45
 
     // MARK: - Lifecycle
 
@@ -133,12 +142,31 @@ final class AudioCore {
         let isArmed = armed
         let thr = threshold
         let armAt = armAtHost
+        let wasAwaitingRelease = awaitingRelease
         os_unfair_lock_unlock(&lock)
 
         meterCount += 1
         if meterCount % 4 == 0 {
             let p = peak
             DispatchQueue.main.async { self.onLevel?(p) }
+        }
+
+        // RELEASE GATE. One shout must be one event, and the dead time alone
+        // cannot promise that: a drawn-out "baaang" or a shouted "reload" runs
+        // 400-600 ms, so the moment the dead time expires the same word is still
+        // above the threshold and reports again. That is how one reload call
+        // became a reload plus a phantom shot, and how a long shout inflated the
+        // round count until the magazine emptied early.
+        //
+        // So after every report the detector waits for the voice to actually
+        // stop — the level has to fall back near the noise floor — before it
+        // will look at anything again. The dead time is now only a floor on how
+        // close two separate shouts may be; the gate handles their length.
+        if wasAwaitingRelease {
+            if peak < thr * Self.releaseFactor {
+                os_unfair_lock_lock(&lock); awaitingRelease = false; os_unfair_lock_unlock(&lock)
+            }
+            return
         }
 
         guard isArmed, peak >= thr else { return }
@@ -149,10 +177,10 @@ final class AudioCore {
             if t < armAt { continue }              // still inside the blanking window
 
             os_unfair_lock_lock(&lock)
+            awaitingRelease = true          // wait for the voice to stop
             if refractoryHost > 0 {
-                // Multi-shot: stay armed but go blind for the dead time, so one
-                // report per shot instead of one per threshold crossing. A
-                // single shout crosses the threshold dozens of times.
+                // Multi-shot: stay armed but go blind for at least the dead
+                // time, so two shouts close together still read as two.
                 armAtHost = t &+ refractoryHost
             } else {
                 armed = false
@@ -196,11 +224,15 @@ final class AudioCore {
         armAtHost = fromHost
         threshold = thr
         refractoryHost = refractory > 0 ? Self.secToHost(refractory) : 0
+        awaitingRelease = false
         os_unfair_lock_unlock(&lock)
     }
 
     func disarm() {
-        os_unfair_lock_lock(&lock); armed = false; os_unfair_lock_unlock(&lock)
+        os_unfair_lock_lock(&lock)
+        armed = false
+        awaitingRelease = false
+        os_unfair_lock_unlock(&lock)
     }
 
     /// Moves the blanking window, in either direction, without disturbing the

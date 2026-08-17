@@ -154,6 +154,11 @@ final class DrillEngine: ObservableObject {
     private var runT0: UInt64?
     private var ammoAtRunStart: AmmoState?
 
+    /// Silence that ends a string with no known shot count. Long enough to sit
+    /// through a pause for thought, short enough that the shooter is not left
+    /// standing when the last shout has already landed.
+    private static let openStringSettle: Double = 4.0
+
     private enum TaskOutcome {
         case completed
         case doOver(duringRun: Bool)
@@ -648,7 +653,21 @@ final class DrillEngine: ObservableObject {
         while alive(gen), !doOverRequested, !stringComplete() {
             let remaining = AudioCore.elapsed(from: AudioCore.now(), to: deadline)
             if remaining <= 0 { break }
-            guard let t = await awaitDetection(timeout: remaining) else { break }
+
+            // A "mag" or open-ended drill has no shot count to wait for, so it
+            // ends when the shooter stops shouting. Without this it sits until
+            // the full run timeout — and worse, if the app's round count is one
+            // short of reality, a "mag" drill waits for a shot that is never
+            // coming and the shooter stands there for thirty seconds.
+            //
+            // Not applied while the gun is dry: he is reloading, and the whole
+            // point of that state is to wait for him to call it.
+            var wait = remaining
+            if !runShotHosts.isEmpty, task.shots.fixedValue == nil, !awaitingReload() {
+                wait = min(remaining, Self.openStringSettle)
+            }
+
+            guard let t = await awaitDetection(timeout: wait) else { break }
             if doOverRequested { break }
 
             if awaitingReload() {
@@ -674,6 +693,15 @@ final class DrillEngine: ObservableObject {
             runShotHosts.append(t)
             runShotConsumed.append(consumed)
             liveShots = runShotHosts.map { AudioCore.elapsed(from: t0, to: $0) }
+            // Log the round count with every shot. When the app and the shooter
+            // disagree about how many rounds are left, a "mag" drill waits for a
+            // shot that is never coming and dies on the timeout — this is the
+            // line that shows which shout went uncounted.
+            log("", String(format: "shot %d at %.2fs · mag %d: %d left",
+                           runShotHosts.count,
+                           AudioCore.elapsed(from: t0, to: t),
+                           ammo.currentMagazine?.id ?? 0,
+                           ammo.roundsInCurrent))
             if manualEndRequested { break }
 
             // Went dry with a magazine still on the belt. Call it. The clock

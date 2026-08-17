@@ -157,8 +157,11 @@ struct ContentView: View {
                     // REFILL, not RELOAD. Refilling the magazines is not
                     // reloading the gun, and the two live in different phases
                     // so they can never be pressed interchangeably.
-                    BigButton(title: engine.outOfAmmo ? "REFILL TO CONTINUE" : "REFILL",
-                              tint: engine.outOfAmmo ? .orange : .teal) { engine.refillAll() }
+                    BigButton(title: engine.outOfAmmo ? "REFILL TO CONTINUE"
+                                : engine.needsRestage ? "REFILL — NEW STAGE" : "REFILL",
+                              tint: engine.outOfAmmo || engine.needsRestage ? .orange : .teal) {
+                        engine.refillAll()
+                    }
                 }
             } else if engine.phase == "timing" {
                 HStack(spacing: 10) {

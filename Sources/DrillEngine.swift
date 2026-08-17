@@ -60,6 +60,12 @@ final class DrillEngine: ObservableObject {
     /// of a stage cannot silently put you back on the previous stage's ammo.
     @Published private(set) var activeLoadout: [Int] = AmmoState.defaultCapacities
 
+    /// The loadout in force changed and the magazines have not been re-staged
+    /// to match. A PROMPT, never a block — the app cannot see what is
+    /// physically in the magazines, so it says what it expects and lets the
+    /// shooter decide. Cleared by REFILL.
+    @Published private(set) var needsRestage = false
+
     /// Nothing left in any magazine. The session does not end — it waits for a
     /// REFILL, because being out of ammunition is a thing that happens between
     /// drills and is fixed in seconds, not a reason to throw away the results.
@@ -292,6 +298,7 @@ final class DrillEngine: ObservableObject {
         // Ammunition is session-scoped: magazines are filled once here and
         // deplete across every drill until the session ends.
         activeLoadout = magCapacities
+        needsRestage = false
         ammo = .loaded(magCapacities)
         log("EXAM", "Loaded \(magCapacities.prefix(3).map(String.init).joined(separator: " / ")).")
 
@@ -373,6 +380,7 @@ final class DrillEngine: ObservableObject {
     func refillAll() {
         guard phase == "queued" else { return }
         ammo.refill(to: activeLoadout)
+        needsRestage = false
         log("EXAM", "Refill — \(activeLoadout.prefix(3).map(String.init).joined(separator: " / ")).")
     }
 
@@ -459,7 +467,10 @@ final class DrillEngine: ObservableObject {
             if order.isEmpty || i >= order.count { break sessionLoop }
             if i < 0 { i = 0 }
 
-            switch await awaitQueued(tasks[order[i]], number: i + 1, total: order.count, gen: gen) {
+            let loadout = TaskList.loadoutInForce(at: i, order: order,
+                                                 tasks: tasks, base: magCapacities)
+            switch await awaitQueued(tasks[order[i]], number: i + 1, total: order.count,
+                                     loadout: loadout, gen: gen) {
             case .aborted:
                 return
             case .next:
@@ -511,7 +522,7 @@ final class DrillEngine: ObservableObject {
     /// step 1, and the whole point of this state is that the shooter controls
     /// when that happens — so the drill is shown, not read.
     private func awaitQueued(_ task: DrillTask, number: Int, total: Int,
-                             gen: Int) async -> QueuedOutcome {
+                             loadout: [Int], gen: Int) async -> QueuedOutcome {
         // Every task passes through here, so this is the one place that can
         // guarantee a drill never begins with the examiner still latched off by
         // something the previous attempt cancelled. Cheap, and it makes the
@@ -521,21 +532,27 @@ final class DrillEngine: ObservableObject {
         }
         speaker.resume()
 
-        // A staged reload declared by the course of fire. Applied on QUEUE, not
-        // on start, so the magazine bar shows what you are about to shoot while
-        // there is still time to look at it — and so arrowing back and forth
-        // over the boundary always leaves the ammunition matching the drill on
-        // screen rather than the one you happened to arrive from.
-        if let loadout = task.refill, loadout != activeLoadout {
+        // The loadout in force at THIS position, resolved by scanning back for
+        // the last declaration — not applied as a one-shot when a declaring
+        // drill happens to be queued. See TaskList.loadoutInForce.
+        //
+        // Deliberately does NOT refill. Navigating between drills must never
+        // change how much ammunition you have: crossing the boundary used to
+        // top every magazine up, which wiped the consumption that the earlier
+        // drills' shot counts are arithmetic on. REFILL stays the only thing
+        // that alters ammunition outside a string, and this only asks for it.
+        if loadout != activeLoadout {
             activeLoadout = loadout
-            ammo.refill(to: loadout)
-            log("EXAM", "Stage reload — \(loadout.prefix(3).map(String.init).joined(separator: " / ")).")
+            needsRestage = true
+            log("EXAM", "Stage reload — \(loadout.prefix(3).map(String.init).joined(separator: " / ")) — press REFILL.")
         }
 
         phase = "queued"
         commandText = task.text
         var queuedHint = "task \(number) of \(total) · \(task.shotsLabel)"
-        if let r = task.refillLabel { queuedHint += " · \(r)" }
+        if needsRestage {
+            queuedHint += " · re-stage \(loadout.prefix(3).map(String.init).joined(separator: "/"))"
+        }
         hint = outOfAmmo ? queuedHint + " · OUT OF AMMUNITION — REFILL"
                          : queuedHint + " · “start”"
         queuedIndex = number - 1

@@ -74,6 +74,33 @@ struct RunResult: Identifiable, Hashable {
 
 enum TaskList {
 
+    /// The magazine loadout in force at `index` of the running order.
+    ///
+    /// A staged reload is a property of a POSITION in the course of fire, not
+    /// an event that happens once. Resolving it by scanning backwards for the
+    /// last declaration makes it idempotent and symmetric: arriving at drill 8
+    /// gives 10/10/1 however you got there, and arrowing back to drill 7 gives
+    /// the starting loadout again.
+    ///
+    /// The bug this replaces applied the loadout as a one-shot side effect when
+    /// a declaring drill was queued. Going forward across the boundary refilled
+    /// every magazine; coming back did nothing, because drill 7 declares
+    /// nothing — so a drill from the first stage ran on the second stage's
+    /// ammunition, and a round trip silently wiped the consumption that the
+    /// earlier drills' shot counts are calculated from.
+    static func loadoutInForce(at index: Int,
+                               order: [Int],
+                               tasks: [DrillTask],
+                               base: [Int]) -> [Int] {
+        guard index >= 0, !order.isEmpty else { return base }
+        for k in stride(from: min(index, order.count - 1), through: 0, by: -1) {
+            let t = order[k]
+            guard tasks.indices.contains(t) else { continue }
+            if let declared = tasks[t].refill { return declared }
+        }
+        return base
+    }
+
     /// Format, one task per line:
     ///
     ///     <text> | <par seconds> | <shots>

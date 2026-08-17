@@ -3,15 +3,41 @@
 #   <command text> | <par seconds> | <shots>
 #
 #   par    a number, or "-" for "time it but don't score it"
-#   shots  a positive integer, "mag" (until the magazine in the gun runs dry),
-#          or "*" (open ended). Omitted = 1.
+#   shots  a positive integer, or "mag" (until the magazine in the gun runs
+#          dry). Omitted = 1.
 #
-# "mag" ends the string when the magazine runs dry. "*" runs until you tap Stop,
-# say "do over", the run times out, or every magazine is spent.
+# Every shot is you SHOUTING — "bang", "rack", whatever. The app hears loudness,
+# never words, so it cannot tell a shot from a rack and does not try to.
+#
+# "mag" ends the string when the magazine runs dry, so there is no reload in a
+# "mag" drill. If a drill is "empty it, reload, keep shooting", give it the
+# total count instead — see 5 and 7 below.
 #
 # Shot counts are NEVER guessed from the text. This list is full of decoy
-# numbers ("7 yards", "you have six seconds", "15 yards") and several drills
-# have no knowable count, so the count is always explicit.
+# numbers ("7 yards", "you have six seconds", "15 yards"), so the count is
+# always explicit.
+#
+# ---------------------------------------------------------------------------
+# COUNTS THAT SPAN A RELOAD DEPEND ON YOUR MAGAZINE SETTINGS.
+#
+# Drills 5 and 7 used to be "*" (open ended), which meant the timer had no idea
+# when you were finished and the drill could not pass or fail. They now carry
+# real counts, worked out from the default magazines: 10 / 10 / 1.
+#
+#   5.  10 in the gun, reload, 2 more            = 12 shots
+#   7.  10 + 10 + 1, everything you have         = 21 shots
+#
+# Two consequences worth knowing:
+#
+#   * Change the magazine capacities in Settings and these two numbers are
+#     wrong. Recompute them here.
+#   * Both assume you START the drill with a full magazine. Ammunition carries
+#     over between drills, so if you have already shot 1-4 the count is short.
+#     Press REFILL in the queued state before 5 and before 7.
+#
+# The reload itself is NOT a shot. Shout to reload when the gun runs dry and it
+# is counted as the reload, not as one of the numbers above.
+# ---------------------------------------------------------------------------
 #
 # Blank lines and lines starting with # or // are ignored.
 # Replace this file from inside the app: Settings > Import a task list.
@@ -20,16 +46,13 @@
 2.  From the high ready position, fire one round to the center of mass. | 3.0 | 1
 3.  From the holster, one round to the center of mass. | 4.0 | 1
 4.  From the holster, one round to the head. | 4.0 | 1
-5.  From the ready position of your choice, fire until empty, reload, and then fire two shots to the center of mass. | 8.0 | *
-6.  From the ready position, tack reload, on the buzzer, two to the chest and one to the head. | 8.0 | 3
-7.  From the holster, finish all your magazines. | 8.0 | *
-8.  Bringing the target out to 7 yards, from the holster, fire two shots to the center of mass. | 4.0 | 2
+5.  From the ready position of your choice, fire until empty, reload, and then fire two shots to the center of mass. | 8.0 | 12
+6.  From the ready position, tack reload, on the buzzer, two to the chest one to the head. | 8.0 | 3
+7.  From the holster finish all your magazines. | 8.0 | 21
+8.  Bringing the target out to 7 yards, from the holster, you're gonna give me two shots to the center of mass. | 4.0 | 2
 9.  From the holster, give me three shots to the center of mass. Standby. | 6.0 | 3
 10. From the holster, give me four shots to the center of mass. Standby. | 8.0 | 4
-11. From the holster, give me five shots to the center of mass with the reload, obviously. Standby. | 12.0 | 5
-12. From the ready position of your choice, fire until empty. | 8.0 | *
-13. Bringing the target out to 15 yards, from the holster, take one shot to the head, you have six seconds to do this drill. | 6.0 | 1
+11. From the holster, give me five shots to the center of mass with the reload obviously. Standby. | 12.0 | 5
+12. From the ready position of your choice, fire until empty. | 8.0 | mag
+13. Bringing the target out to 15 yards, from the holster, one shot to the head, you have six seconds to do this drill. | 6.0 | 1
 14. OK, you're going to clear a jam and any malfunction you may have. You have four shots. From the shooting position. Stand by. | 18.0 | 4
-15. You will shoot a string of six one-handed (strong hand) shots to the center of mass from 7 yards. | 12.0 | 6
-16. For the double-feed drill, you will move behind cover while clearing malfunctions. | 18.0 | 4
-17. For the tap-rack drill, you will move behind cover while clearing malfunctions. | 18.0 | 4

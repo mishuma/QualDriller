@@ -70,6 +70,12 @@ enum TaskList {
     ///   * `shots` may be a positive integer, `mag` (until the magazine in the
     ///     gun runs dry), or `*` (open ended). Omitted = 1.
     ///
+    ///     PREFER AN EXPLICIT NUMBER. `*` is still parsed for compatibility,
+    ///     but a string with no expected count cannot be scored — it has no
+    ///     idea when the shooter finished, so there is nothing to pass or fail
+    ///     against. A drill that empties a magazine and reloads should carry
+    ///     the TOTAL count; the reload shout is not one of them.
+    ///
     /// Leading numbering is optional. Blank lines and lines starting with # or //
     /// are ignored.
     ///
@@ -157,7 +163,7 @@ enum TaskList {
     1. From the low ready position, fire one round to the center of mass. | 3.0 | 1
     2. From the holster, fire one round to the center of mass. | 4.0 | 1
     3. From the holster, two to the chest, one to the head. | 6.0 | 3
-    4. From the ready position, fire until empty. | 8.0 | *
+    4. From the ready position, fire until empty. | 8.0 | mag
     """
 
     static func csv(_ results: [RunResult]) -> String {

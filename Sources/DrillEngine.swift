@@ -154,9 +154,10 @@ final class DrillEngine: ObservableObject {
     private var runT0: UInt64?
     private var ammoAtRunStart: AmmoState?
 
-    /// Silence that ends a string with no known shot count. Long enough to sit
-    /// through a pause for thought, short enough that the shooter is not left
-    /// standing when the last shout has already landed.
+    /// Silence that ends a string. Long enough to sit through a pause for
+    /// thought, short enough that the shooter is not left standing when the
+    /// last shout has already landed. Applies to every drill: a fixed-count
+    /// string that has lost a shout should score SHORT promptly, not hang.
     private static let openStringSettle: Double = 4.0
 
     private enum TaskOutcome {
@@ -667,16 +668,17 @@ final class DrillEngine: ObservableObject {
             let remaining = AudioCore.elapsed(from: AudioCore.now(), to: deadline)
             if remaining <= 0 { break }
 
-            // A "mag" or open-ended drill has no shot count to wait for, so it
-            // ends when the shooter stops shouting. Without this it sits until
-            // the full run timeout — and worse, if the app's round count is one
-            // short of reality, a "mag" drill waits for a shot that is never
-            // coming and the shooter stands there for thirty seconds.
+            // The string ends when the shooter stops shouting, whatever the
+            // expected count. Without this a drill sits until the full run
+            // timeout: an open-ended one because it has no count to wait for, a
+            // fixed one because a single missed shout leaves it waiting for a
+            // shot that is never coming. Four seconds of silence and a verdict
+            // of "SHORT — 11 of 12" beats thirty seconds of nothing.
             //
             // Not applied while the gun is dry: he is reloading, and the whole
             // point of that state is to wait for him to call it.
             var wait = remaining
-            if !runShotHosts.isEmpty, task.shots.fixedValue == nil, !awaitingReload() {
+            if !runShotHosts.isEmpty, !awaitingReload() {
                 wait = min(remaining, Self.openStringSettle)
             }
 

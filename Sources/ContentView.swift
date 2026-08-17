@@ -104,11 +104,17 @@ struct ContentView: View {
                     .transition(.scale.combined(with: .opacity))
             }
 
+            // The task counter and the words that work right now. Read at
+            // arm's length, mid-drill, by someone who is not going to squint —
+            // this is the second most important text on the screen after the
+            // timer, and it was set in footnote.
             Text(engine.hint.isEmpty ? " " : engine.hint)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 20, weight: .semibold, design: .rounded))
+                .foregroundStyle(Color(white: 0.78))
                 .multilineTextAlignment(.center)
-                .padding(.horizontal, 20)
+                .lineLimit(3)
+                .minimumScaleFactor(0.7)
+                .padding(.horizontal, 16)
 
             Text(engine.transcript.isEmpty ? " " : "“\(engine.transcript)”")
                 .font(.footnote.italic())

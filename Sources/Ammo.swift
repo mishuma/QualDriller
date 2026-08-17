@@ -22,7 +22,7 @@ struct AmmoState: Hashable {
 
     static let maxMagazines = 3
     static let maxRounds = 10
-    static let defaultCapacities = [10, 10, 1]
+    static let defaultCapacities = [10, 10, 5]
 
     private(set) var magazines: [Magazine]
     /// Index into `magazines` of the magazine currently in the gun.

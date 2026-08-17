@@ -34,8 +34,20 @@ struct DrillTask: Identifiable, Hashable {
     /// Par time in seconds, or nil when the task list doesn't specify one.
     let par: Double?
     let shots: ShotCount
+    /// A new magazine loadout to apply when this drill is queued, e.g. `10/10/1`.
+    ///
+    /// A qualifier is staged: you shoot part of it on one loadout, then reload
+    /// differently for the rest. Without this the task file can only describe
+    /// one loadout for the whole session, so every count downstream of the
+    /// change is wrong and there is no way to say where the change happens.
+    /// Declared here rather than in Settings because it is a property of the
+    /// COURSE OF FIRE, not of the app.
+    let refill: [Int]?
 
     var shotsLabel: String { shots.label }
+    var refillLabel: String? {
+        refill.map { "reload " + $0.map(String.init).joined(separator: "/") }
+    }
 }
 
 struct RunResult: Identifiable, Hashable {
@@ -69,6 +81,9 @@ enum TaskList {
     ///   * `par` may be a number, or `-` / empty for "time it but don't score it".
     ///   * `shots` may be a positive integer, `mag` (until the magazine in the
     ///     gun runs dry), or `*` (open ended). Omitted = 1.
+    ///   * an optional FOURTH field is a magazine loadout like `10/10/1`,
+    ///     applied when this drill is queued. Use it where the course of fire
+    ///     says to re-load differently for the next stage.
     ///
     ///     PREFER AN EXPLICIT NUMBER. `*` is still parsed for compatibility,
     ///     but a string with no expected count cannot be scored — it has no
@@ -127,8 +142,16 @@ enum TaskList {
                 }
             }
 
+            // Fourth field: a staged reload, "10/10/1".
+            var refill: [Int]? = nil
+            if fields.count > 3 {
+                let parts = fields[3].split(whereSeparator: { "/,".contains($0) })
+                    .compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+                if !parts.isEmpty { refill = parts }
+            }
+
             guard !body.isEmpty else { continue }
-            out.append(DrillTask(text: body, par: par, shots: shots))
+            out.append(DrillTask(text: body, par: par, shots: shots, refill: refill))
         }
         return out
     }

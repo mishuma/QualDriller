@@ -5,18 +5,27 @@
 #   par    a number, or "-" for "time it but don't score it"
 #   shots  a positive integer, or "mag" (until the magazine in the gun runs
 #          dry). Omitted = 1.
+#   reload an OPTIONAL fourth field, a magazine loadout like "10/10/1",
+#          applied when that drill is queued. Use it where the course of fire
+#          says to re-load differently for the next stage.
 #
-# "*" (open ended) is still parsed but is no longer used here: a string with no
+# "*" (open ended) is still parsed but is not used here: a string with no
 # expected count cannot stop the timer or be scored, because nothing knows when
-# you finished. Give every drill a number.
+# you finished.
 #
-# COUNTS THAT SPAN A RELOAD DEPEND ON YOUR MAGAZINE SETTINGS (default 10/10/1):
-#     5.  10 in the gun, reload, 2 more        = 12
-#     7.  10 + 10 + 1, everything you have     = 21
-#    12.  one full magazine                    = 10
-# Change the capacities in Settings and these are wrong -- recompute them here.
-# They also assume you START with a full magazine; ammunition carries over
-# between drills, so press REFILL in the queued state before 5, 7 and 12.
+# THE COURSE OF FIRE IS STAGED:
+#     Drills 1-7   start on 10/10/5 (Settings > Ammunition)
+#     Drill 8      re-loads to 10/10/1 and the rest run on that
+#
+# Ammunition carries over between drills, so a count that spans a reload is
+# arithmetic on what is left, not on a full magazine:
+#     5.  drills 1-4 use 4 rounds, so 6 left in the gun, reload, 2 more  = 8
+#     7.  whatever is still on the belt at that point                    = 10
+# Change the loadouts and both are wrong. Recompute them here.
+#
+# 12 is "mag" on purpose: "fire until empty" ends when the magazine runs dry
+# whatever is in it, so it needs no arithmetic and cannot go stale.
+#
 # The reload shout is NOT one of the counts -- while the gun is dry it is read
 # as the reload, not as a shot.
 #
@@ -30,15 +39,15 @@
 1.  From the low ready position, fire one round to the center of mass. | 3.0 | 1
 2.  From the high ready position, fire one round to the center of mass. | 3.0 | 1
 3.  From the holster, one round to the center of mass. | 4.0 | 1
-4.  From the holster, one round to the head. | 4.0 | 1
-5.  From the ready position of your choice, fire until empty, reload, and then fire two shots to the center of mass. | 8.0 | 12
+4.  From the holster, one round to the head. | 5.0 | 1
+5.  From the ready position of your choice, fire until empty, reload, and then fire two shots to the center of mass. | 15.0 | 8
 6.  From the ready position, tack reload, on the buzzer, two to the chest and one to the head. | 8.0 | 3
-7.  From the holster, finish all your magazines. | 8.0 | 21
-8.  Bringing the target out to 7 yards, from the holster, fire two shots to the center of mass. | 4.0 | 2
+7.  From the holster, finish all your magazines. | 8.0 | 10
+8.  Bringing the target out to 7 yards, from the holster, fire two shots to the center of mass. | 4.0 | 2 | 10/10/1
 9.  From the holster, give me three shots to the center of mass. Standby. | 6.0 | 3
 10. From the holster, give me four shots to the center of mass. Standby. | 8.0 | 4
 11. From the holster, give me five shots to the center of mass with the reload, obviously. Standby. | 12.0 | 5
-12. From the ready position of your choice, fire until empty. | 8.0 | 10
+12. From the ready position of your choice, fire until empty. | 8.0 | mag
 13. Bringing the target out to 15 yards, from the holster, take one shot to the head, you have six seconds to do this drill. | 6.0 | 1
 14. OK, you're going to clear a jam and any malfunction you may have. You have four shots. From the shooting position. Stand by. | 18.0 | 4
 15. You will shoot a string of six one-handed (strong hand) shots to the center of mass from 7 yards. | 12.0 | 6

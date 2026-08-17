@@ -54,6 +54,12 @@ final class DrillEngine: ObservableObject {
     @Published var queuedIndex = 0
     @Published var queuedCount = 0
 
+    /// The loadout in force right now: the session's starting magazines until a
+    /// drill declares a staged reload, that drill's loadout afterwards. REFILL
+    /// tops up to THIS, not to the Settings value, so pressing it in the middle
+    /// of a stage cannot silently put you back on the previous stage's ammo.
+    @Published private(set) var activeLoadout: [Int] = AmmoState.defaultCapacities
+
     var canGoNext: Bool { phase == "queued" && queuedIndex + 1 < queuedCount }
     var canGoPrev: Bool { phase == "queued" && queuedIndex > 0 }
 
@@ -280,6 +286,7 @@ final class DrillEngine: ObservableObject {
         logLines.removeAll()
         // Ammunition is session-scoped: magazines are filled once here and
         // deplete across every drill until the session ends.
+        activeLoadout = magCapacities
         ammo = .loaded(magCapacities)
         log("EXAM", "Loaded \(magCapacities.prefix(3).map(String.init).joined(separator: " / ")).")
 
@@ -343,8 +350,8 @@ final class DrillEngine: ObservableObject {
     /// phase or they will be pressed interchangeably.
     func refillAll() {
         guard phase == "queued" else { return }
-        ammo.refill(to: magCapacities)
-        log("EXAM", "Refill — \(magCapacities.prefix(3).map(String.init).joined(separator: " / ")).")
+        ammo.refill(to: activeLoadout)
+        log("EXAM", "Refill — \(activeLoadout.prefix(3).map(String.init).joined(separator: " / ")).")
     }
 
     /// Manual fallback for the end of a string — always available.
@@ -490,9 +497,22 @@ final class DrillEngine: ObservableObject {
         }
         speaker.resume()
 
+        // A staged reload declared by the course of fire. Applied on QUEUE, not
+        // on start, so the magazine bar shows what you are about to shoot while
+        // there is still time to look at it — and so arrowing back and forth
+        // over the boundary always leaves the ammunition matching the drill on
+        // screen rather than the one you happened to arrive from.
+        if let loadout = task.refill, loadout != activeLoadout {
+            activeLoadout = loadout
+            ammo.refill(to: loadout)
+            log("EXAM", "Stage reload — \(loadout.prefix(3).map(String.init).joined(separator: " / ")).")
+        }
+
         phase = "queued"
         commandText = task.text
-        hint = "task \(number) of \(total) · \(task.shotsLabel) · “start”"
+        var queuedHint = "task \(number) of \(total) · \(task.shotsLabel)"
+        if let r = task.refillLabel { queuedHint += " · \(r)" }
+        hint = queuedHint + " · “start”"
         queuedIndex = number - 1
         queuedCount = total
         verdict = ""

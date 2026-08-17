@@ -92,29 +92,16 @@ final class DrillEngine: ObservableObject {
     @Published var speakAloud: Bool     { didSet { Self.d.set(speakAloud, forKey: "speakAloud") } }
     @Published var readBackTime: Bool   { didSet { Self.d.set(readBackTime, forKey: "readBackTime") } }
     @Published var listenForVoice: Bool { didSet { Self.d.set(listenForVoice, forKey: "listenForVoice") } }
-    /// Dead time after each detected shot. See AudioCore.arm — live fire wants
-    /// ~100 ms, shouting "Bang!" wants ~300 ms.
+    /// Dead time after each shout. A shouted "Bang!" lasts 300-500 ms and
+    /// without this one shout counts as several.
     @Published var refractoryMs: Double { didSet { Self.d.set(refractoryMs, forKey: "refractoryMs") } }
     /// Rounds loaded into magazines 1, 2, 3 at the start of every session.
     @Published var magCapacities: [Int] { didSet { Self.d.set(magCapacities, forKey: "magCapacities") } }
-    /// Swap to the next magazine automatically when the current one runs dry.
-    /// Without this, live fire would require narrating every reload out loud.
-    @Published var autoAdvanceOnEmpty: Bool { didSet { Self.d.set(autoAdvanceOnEmpty, forKey: "autoAdvanceOnEmpty") } }
-    /// Dead time after a reload is heard, so the rest of the reload — the
-    /// magazine hitting the ground, the slide going forward — is not counted as
-    /// the first shot back. See `awaitingReload`.
-    @Published var reloadBlankingMs: Double { didSet { Self.d.set(reloadBlankingMs, forKey: "reloadBlankingMs") } }
-    /// Hard floor under the calibrated threshold. The threshold is derived from
-    /// the room's noise floor, which in a quiet bay lands far below a gunshot
-    /// and well within reach of a holster draw. Raising the floor is the blunt
-    /// fix for that and costs nothing in timing accuracy.
+    /// Hard floor under the calibrated threshold, and the only defence against
+    /// a holster draw being counted as a shot. The threshold is derived from the
+    /// room's noise floor, which lands well below a shout and well within reach
+    /// of a draw. Costs nothing in timing accuracy.
     @Published var minThreshold: Double { didSet { Self.d.set(minThreshold, forKey: "minThreshold") } }
-    /// Reject crossings that are not impulsive. See AudioCore.arm.
-    @Published var impulseGate: Bool    { didSet { Self.d.set(impulseGate, forKey: "impulseGate") } }
-    @Published var impulseRatio: Double { didSet { Self.d.set(impulseRatio, forKey: "impulseRatio") } }
-    /// Log the measured impulse ratio for every detection and every rejection,
-    /// which is the only way to pick a ratio from real range data.
-    @Published var logImpulse: Bool     { didSet { Self.d.set(logImpulse, forKey: "logImpulse") } }
     /// Wording of the prompt after the command is read.
     @Published var readyPrompt: ReadyPrompt {
         didSet { Self.d.set(readyPrompt.rawValue, forKey: "readyPrompt") }
@@ -182,14 +169,8 @@ final class DrillEngine: ObservableObject {
             "blankingMs": 350.0, "maxRunSeconds": 30.0, "shuffle": false,
             "speakAloud": true, "readBackTime": true, "listenForVoice": true,
             "resultPause": 1.2, "refractoryMs": 300.0,
-            "magCapacities": AmmoState.defaultCapacities, "autoAdvanceOnEmpty": true,
-            // The gate ships OFF. Its ratio has never been measured against a
-            // real gunshot or a real holster, and a wrong value deletes shots
-            // silently — which is worse than the false holster shot it fixes.
-            // Turn on logging, shoot one string, then set it from the numbers.
-            "minThreshold": 0.0, "impulseGate": false, "impulseRatio": 6.0,
-            "logImpulse": true, "readyPrompt": ReadyPrompt.shooterReady.rawValue,
-            "reloadBlankingMs": 400.0
+            "magCapacities": AmmoState.defaultCapacities,
+            "minThreshold": 0.0, "readyPrompt": ReadyPrompt.shooterReady.rawValue
         ])
         useRandomDelay = d.bool(forKey: "useRandomDelay")
         fixedDelay     = d.double(forKey: "fixedDelay")
@@ -203,12 +184,7 @@ final class DrillEngine: ObservableObject {
         readBackTime   = d.bool(forKey: "readBackTime")
         listenForVoice = d.bool(forKey: "listenForVoice")
         magCapacities  = (d.array(forKey: "magCapacities") as? [Int]) ?? AmmoState.defaultCapacities
-        autoAdvanceOnEmpty = d.bool(forKey: "autoAdvanceOnEmpty")
         minThreshold   = d.double(forKey: "minThreshold")
-        impulseGate    = d.bool(forKey: "impulseGate")
-        impulseRatio   = d.double(forKey: "impulseRatio")
-        logImpulse     = d.bool(forKey: "logImpulse")
-        reloadBlankingMs = d.double(forKey: "reloadBlankingMs")
         readyPrompt = ReadyPrompt(rawValue: d.string(forKey: "readyPrompt") ?? "") ?? .shooterReady
         voicePreference = Speaker.VoicePreference(
             rawValue: d.string(forKey: "voicePreference") ?? "") ?? .male
@@ -220,15 +196,8 @@ final class DrillEngine: ObservableObject {
         audio.onLevel = { [weak self] p in
             Task { @MainActor in self?.level = p }
         }
-        audio.onDetect = { [weak self] host, ratio in
-            Task { @MainActor in self?.deliverDetection(host, ratio: ratio) }
-        }
-        audio.onReject = { [weak self] ratio in
-            Task { @MainActor in
-                guard let self, self.logImpulse else { return }
-                self.log("", String(format: "ignored — impulse %.1f× (gate %.1f×)",
-                                    ratio, self.impulseRatio))
-            }
+        audio.onDetect = { [weak self] host in
+            Task { @MainActor in self?.deliverDetection(host) }
         }
         // Captured directly, not through `self`: this runs on the audio render
         // thread and must not touch main-actor state.
@@ -352,7 +321,7 @@ final class DrillEngine: ObservableObject {
     func stopString() {
         guard phase == "timing" else { return }
         manualEndRequested = true
-        deliverDetection(AudioCore.now(), ratio: 0)
+        deliverDetection(AudioCore.now())
     }
 
     func answer(_ cmd: DrillCommand) {
@@ -373,12 +342,10 @@ final class DrillEngine: ObservableObject {
     /// a different verb and lives in a different phase so the two can never be
     /// confused for one another.
     ///
-    /// Button only because there is no voice "reload" and there must not be
-    /// one. The shout itself crosses the amplitude threshold and is counted as
-    /// a shot, because the detector hears loudness and not words. The
-    /// retroactive un-count that once compensated for that could delete a
-    /// genuine shot fired inside the window, so the command and the heuristic
-    /// were both removed.
+    /// Rarely needed now: when the gun is dry, shouting anything performs the
+    /// reload (see `awaitingReload`). This is the button for a tactical reload
+    /// with rounds still in the magazine, which the app cannot infer, and the
+    /// fallback for when a shout is not heard.
     func reloadNow() {
         guard phase == "timing" else { return }
 
@@ -633,8 +600,7 @@ final class DrillEngine: ObservableObject {
         pendingDetections.removeAll()
         audio.arm(fromHost: t0 &+ AudioCore.secToHost(blankingMs / 1000),
                   threshold: threshold,
-                  refractory: max(0.02, refractoryMs / 1000),
-                  impulse: impulseGate ? Float(impulseRatio) : 0)
+                  refractory: max(0.02, refractoryMs / 1000))
         // "Do over" is the only thing heard here. Reload is the button beside
         // it, never a word. "Bang" and "Rack" need no recognition at all — they
         // are counted because they are loud, which is why a malfunction
@@ -657,29 +623,26 @@ final class DrillEngine: ObservableObject {
 
         /// The gun is empty and there is a magazine left to put in it.
         ///
-        /// This is the one state in which a loud noise CANNOT be a shot: an
-        /// empty gun does not fire. So the usual "every loud event is a shot"
-        /// rule is suspended here and the next noise is read as the reload,
-        /// whether the shooter called it out or the gun made the sound itself.
-        /// He does not have to reach for the button, which costs him time he is
-        /// being scored on.
+        /// This is the one state in which a shout CANNOT be a shot: an empty gun
+        /// does not fire. So the usual "every loud event is a shot" rule is
+        /// suspended here and the next one is read as the shooter calling his
+        /// reload. He does not have to reach for the button, which costs him
+        /// time he is being scored on.
         ///
         /// Note what this is NOT: it is not the voice "reload" command that was
-        /// removed. Nothing is recognised, no words are involved, and — this is
-        /// the part that matters — no shot is ever recorded and then retracted.
-        /// The old command's failure mode was retroactively DELETING a real
-        /// shot. This one cannot: in this state no shot is recorded at all. The
-        /// worst it can do is advance a magazine early on stray noise, which
-        /// REFILL undoes and which never touches a shot time.
+        /// removed. Nothing is recognised and no words are involved — he can
+        /// shout "reload", or "bang", or anything at all. And, the part that
+        /// matters, no shot is ever recorded and then retracted. The old
+        /// command's failure mode was retroactively DELETING a real shot. This
+        /// one cannot: in this state no shot is recorded at all. The worst it
+        /// can do is advance a magazine early on stray noise, which REFILL
+        /// undoes and which never touches a shot time.
         ///
-        /// The load-bearing assumption is the round count, which is only as
-        /// good as the detector feeding it. Anything miscounted as a shot —
-        /// a holster draw today — makes the app believe the gun is dry while it
-        /// is not, and a genuine shot then lands here and is read as a reload.
-        /// Fixing the holster false positive (see the impulse gate) is what
-        /// makes this rule sound, not optional polish.
+        /// The load-bearing assumption is the round count. Anything miscounted
+        /// as a shot makes the app believe the gun is dry while it is not, and a
+        /// genuine shout then lands here and is read as a reload instead.
         func awaitingReload() -> Bool {
-            !autoAdvanceOnEmpty && ammo.roundsInCurrent == 0 && ammo.hasSpareMagazine
+            ammo.roundsInCurrent == 0 && ammo.hasSpareMagazine
         }
 
         while alive(gen), !doOverRequested, !stringComplete() {
@@ -698,22 +661,15 @@ final class DrillEngine: ObservableObject {
                 let mag = ammo.currentMagazine
                 log("EXAM", String(format: "Reload heard at %.2fs — magazine %d, %d rounds.",
                                    at, mag?.id ?? 0, mag?.rounds ?? 0))
-                // Go deaf for the rest of the reload. Without this the magazine
-                // hitting the ground and the slide going forward each land as
-                // the first shot back.
-                audio.setBlanking(untilHost: t &+ AudioCore.secToHost(max(0, reloadBlankingMs / 1000)))
+                // No extra blanking needed: the detector applied the shot dead
+                // time to this event like any other, which already covers the
+                // tail of the word he just shouted.
                 continue                            // deliberately NOT a shot
             }
 
             // Every audible event costs a round: a shot fires one, a rack ejects
             // one. The detector cannot tell them apart and does not need to.
-            var consumed = ammo.consume()
-            if !consumed, autoAdvanceOnEmpty, ammo.hasSpareMagazine {
-                ammo.reload()
-                consumed = ammo.consume()
-                runReloads.append(AudioCore.elapsed(from: t0, to: t))
-                log("EXAM", "Magazine \(ammo.currentMagazine?.id ?? 0) (automatic).")
-            }
+            let consumed = ammo.consume()
 
             runShotHosts.append(t)
             runShotConsumed.append(consumed)
@@ -729,7 +685,7 @@ final class DrillEngine: ObservableObject {
             // reloaded for him and "Reload!" would be a lie. Skipped when the
             // string is already over on its own terms (a "mag" drill ends here).
             if consumed, ammo.roundsInCurrent == 0, ammo.hasSpareMagazine,
-               !autoAdvanceOnEmpty, !stringComplete(), alive(gen) {
+               !stringComplete(), alive(gen) {
                 await announceEmptyMagazine()
                 if !alive(gen) { break }
             }
@@ -941,13 +897,7 @@ final class DrillEngine: ObservableObject {
     /// A detection arrived from the audio thread. Hand it to whoever is waiting,
     /// or queue it so it isn't lost between two awaits.
     ///
-    /// `ratio` is how impulsive the crossing was. It is logged rather than acted
-    /// on here — the gate itself lives on the audio thread, because a decision
-    /// made up here would already have lost the sample that justified it.
-    private func deliverDetection(_ host: UInt64, ratio: Float) {
-        if logImpulse, ratio > 0, phase == "timing" {
-            log("", String(format: "shot %d — impulse %.1f×", runShotHosts.count + 1, ratio))
-        }
+    private func deliverDetection(_ host: UInt64) {
         if detectContinuation != nil {
             resolveDetection(host)
         } else {

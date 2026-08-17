@@ -23,7 +23,9 @@ extension VoiceCommands {
         case answers
         /// Only "do over". Used while the timer is running and through the
         /// readback, where every other utterance must be ignored — including
-        /// "Bang" and "Rack", which are counted by loudness and never by words.
+        /// "Bang", "Rack" and "Reload", which are counted by LOUDNESS and never
+        /// by words. Recognising them would put speech recognition, which lands
+        /// 200-800 ms late, into the timing path.
         case doOverOnly
         /// Only "start". Used in the queued state, where nothing is scored and
         /// nothing is timed, so the only thing worth hearing is the go-ahead.
@@ -148,8 +150,8 @@ final class VoiceCommands {
                             return
                         }
                     }
-                    // Mid-string everything else is noise by definition — we are
-                    // hearing gunfire and shouting.
+                    // Mid-string everything else is noise by definition — we
+                    // are listening to someone shouting at a phone.
                     guard self.mode == .answers else { return }
                     if result.isFinal {
                         self.flushUnrecognized()

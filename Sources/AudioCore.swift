@@ -4,6 +4,14 @@ import os
 
 /// Sample-accurate audio for the drill.
 ///
+/// WHAT THIS LISTENS TO: a human voice, and nothing else. This app is for dry
+/// practice. Every "shot" is the shooter shouting — "bang", "rack", "reload" —
+/// so every event the detector sees is a 300-500 ms vocal ramp, never a 1-3 ms
+/// gunshot transient and never mechanical noise from a real weapon. Do not
+/// reintroduce logic that assumes otherwise: attack-sharpness discrimination,
+/// near-full-scale amplitude floors, and anything that tries to hear a slide or
+/// a magazine were all tried on that assumption and removed.
+///
 /// TIMING CONTRACT — do not "simplify" this:
 ///  * Every event is timestamped in mach host time, captured on the audio
 ///    render thread from `AVAudioTime.hostTime` plus the sample offset inside
@@ -44,15 +52,8 @@ final class AudioCore {
     private var buzzBuffer: AVAudioPCMBuffer?
     private(set) var isRunning = false
 
-    /// Called on the main queue with the host time of a threshold crossing and
-    /// the impulse ratio measured at that crossing (see `impulseRatio`). The
-    /// ratio is reported whether or not the gate is enabled, so a range session
-    /// produces the numbers needed to set the gate.
-    var onDetect: ((UInt64, Float) -> Void)?
-    /// Called on the main queue when a crossing was loud enough but was thrown
-    /// away by the impulse gate, with the ratio it measured. At most one per
-    /// buffer, so a long scrape reports once rather than fifty times.
-    var onReject: ((Float) -> Void)?
+    /// Called on the main queue with the host time of a threshold crossing.
+    var onDetect: ((UInt64) -> Void)?
     /// Called on the main queue, throttled, with the block peak (0...1).
     var onLevel: ((Float) -> Void)?
     /// Called on the AUDIO THREAD. Forward to the recognizer; do nothing slow.
@@ -68,20 +69,6 @@ final class AudioCore {
     private var calibrating = false
     private var noisePeak: Float = 0
     private var meterCount = 0
-    /// Minimum ratio of the crossing sample to the amplitude envelope just
-    /// before it. 0 disables the gate entirely. See `arm`.
-    private var impulseRatio: Float = 0
-
-    // Envelope follower. Audio thread only — never touched under the lock,
-    // because it is advanced over every sample of every buffer and the lock is
-    // taken once per buffer.
-    /// Time constant of the envelope follower. Long enough that a scrape or a
-    /// shout has raised it before its own peak arrives, short enough that it
-    /// has collapsed again between two 0.15 s splits.
-    private static let envTimeConstant = 0.015
-    private var envelope: Float = 0
-    private var envCoeff: Float = 0
-    private var envSampleRate: Double = 0
 
     // MARK: - Lifecycle
 
@@ -146,7 +133,6 @@ final class AudioCore {
         let isArmed = armed
         let thr = threshold
         let armAt = armAtHost
-        let gate = impulseRatio
         os_unfair_lock_unlock(&lock)
 
         meterCount += 1
@@ -155,57 +141,26 @@ final class AudioCore {
             DispatchQueue.main.async { self.onLevel?(p) }
         }
 
-        if envSampleRate != sr {
-            envSampleRate = sr
-            envCoeff = Float(1 - exp(-1.0 / (sr * Self.envTimeConstant)))
-        }
-
-        // The envelope must be advanced over EVERY buffer, armed or not, so that
-        // it is already tracking the room when the detector arms. Bailing out
-        // early on `!isArmed` would leave it stale at zero and make the first
-        // crossing after arming look infinitely impulsive.
-        var env = envelope
-        var reported = false
-        var rejected: Float?
+        guard isArmed, peak >= thr else { return }
 
         for i in 0..<n {
-            let a = Swift.abs(ch[i])
-            let envBefore = env
-            env += (a - env) * envCoeff
-
-            if reported || !isArmed || a < thr { continue }
+            guard Swift.abs(ch[i]) >= thr else { continue }
             let t = base &+ Self.secToHost(Double(i) / sr)
             if t < armAt { continue }              // still inside the blanking window
-
-            // How far this sample stands above the sound that preceded it.
-            // A gunshot goes from room noise to full scale inside a millisecond,
-            // so the ratio is enormous. A holster draw, a reholster and a
-            // shouted "Bang!" all ramp up over tens of milliseconds, dragging
-            // the envelope with them, so the ratio stays small.
-            let ratio = a / Swift.max(envBefore, 1e-5)
-            if gate > 0, ratio < gate {
-                if rejected == nil { rejected = ratio }
-                continue
-            }
 
             os_unfair_lock_lock(&lock)
             if refractoryHost > 0 {
                 // Multi-shot: stay armed but go blind for the dead time, so one
-                // report per shot instead of one per threshold crossing. A shout
-                // or a muzzle blast crosses the threshold many times.
+                // report per shot instead of one per threshold crossing. A
+                // single shout crosses the threshold dozens of times.
                 armAtHost = t &+ refractoryHost
             } else {
                 armed = false
             }
             os_unfair_lock_unlock(&lock)
 
-            DispatchQueue.main.async { self.onDetect?(t, ratio) }
-            reported = true                         // at most one report per buffer
-        }
-
-        envelope = env
-        if !reported, let r = rejected {
-            DispatchQueue.main.async { self.onReject?(r) }
+            DispatchQueue.main.async { self.onDetect?(t) }
+            return                                  // at most one report per buffer
         }
     }
 
@@ -231,24 +186,16 @@ final class AudioCore {
     /// report (the detector disarms itself); pass a positive value to keep
     /// reporting every shot in a string with that much blindness between them.
     ///
-    /// Sizing it matters: a gunshot is a 1-3 ms transient and live splits can be
-    /// 0.15 s, so ~0.10 s is right for live fire. A shouted "Bang!" lasts
-    /// 300-500 ms and would otherwise register as several shots, so dry practice
-    /// needs ~0.30 s. There is no single value that serves both.
-    ///
-    /// `impulse` is the minimum ratio of a crossing to the envelope immediately
-    /// before it. It separates a gunshot (near-instant attack) from a holster
-    /// draw or reholster (a ramp), at the cost of also rejecting a shouted
-    /// "Bang!", which ramps the same way. Pass 0 — the default — to disable it,
-    /// which is what the buzzer detection wants: T0 must never be gated.
-    func arm(fromHost: UInt64, threshold thr: Float,
-             refractory: Double = 0, impulse: Float = 0) {
+    /// Sizing it: a shouted "Bang!" lasts 300-500 ms and would otherwise
+    /// register as several shots, so ~0.30 s is right. It cannot usefully go
+    /// much below that — the floor is how long a person takes to say a word,
+    /// which also means shouted splits measure speech cadence and not shooting.
+    func arm(fromHost: UInt64, threshold thr: Float, refractory: Double = 0) {
         os_unfair_lock_lock(&lock)
         armed = true
         armAtHost = fromHost
         threshold = thr
         refractoryHost = refractory > 0 ? Self.secToHost(refractory) : 0
-        impulseRatio = Swift.max(0, impulse)
         os_unfair_lock_unlock(&lock)
     }
 

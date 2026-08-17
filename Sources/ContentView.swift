@@ -87,13 +87,13 @@ struct ContentView: View {
 
             SplitsRow(shots: engine.liveShots, expected: engine.expectedShots)
 
-            // Running dry has to be unmissable, and it can only be shown — an
-            // audible cue during a timed string would cross the detector's
-            // threshold and be counted as a shot.
+            // Running dry has to be unmissable. The examiner also calls it
+            // aloud, but only with the mic deafened for the length of the line
+            // — see DrillEngine.announceEmptyMagazine.
             if engine.isRunning && engine.ammo.roundsInCurrent == 0 {
                 Label(engine.ammo.hasSpareMagazine
-                        ? (engine.phase == "timing" && !engine.autoAdvanceOnEmpty
-                             ? "EMPTY — RELOAD, THEN CALL IT"
+                        ? (engine.phase == "timing"
+                             ? "EMPTY — RELOAD, THEN SHOUT"
                              : "MAGAZINE EMPTY — RELOAD")
                         : "OUT OF AMMUNITION",
                       systemImage: "exclamationmark.triangle.fill")
@@ -132,8 +132,9 @@ struct ContentView: View {
 
     private var controls: some View {
         VStack(spacing: 10) {
-            // The buttons are a first-class path, not a fallback. Gloves, wind,
-            // ear pro and a noisy bay all defeat speech recognition.
+            // The buttons are a first-class path, not a fallback. A hoarse
+            // voice, a room where you can't shout, and a recogniser that
+            // mishears all defeat the spoken commands.
             if engine.phase == "queued" {
                 // The only phase with drill navigation or a reload. Nothing is
                 // armed and nothing has been read out, so moving around the
@@ -381,57 +382,37 @@ private struct SettingsView: View {
                         Text(String(format: "Sensitivity: %.1f×", engine.sensitivity))
                         Slider(value: $engine.sensitivity, in: 0.4...3, step: 0.1)
                     }
-                    Stepper("Blanking: \(Int(engine.blankingMs)) ms",
+                    VStack(alignment: .leading) {
+                        Text(engine.minThreshold <= 0
+                             ? "Ignore quiet sounds: off"
+                             : String(format: "Ignore quiet sounds: below %.2f", engine.minThreshold))
+                        Slider(value: $engine.minThreshold, in: 0...0.9, step: 0.05)
+                    }
+                    Stepper("Shout dead time: \(Int(engine.refractoryMs)) ms",
+                            value: $engine.refractoryMs, in: 100...800, step: 10)
+                    Stepper("Buzzer blanking: \(Int(engine.blankingMs)) ms",
                             value: $engine.blankingMs, in: 0...1500, step: 25)
-                    Stepper("Shot dead time: \(Int(engine.refractoryMs)) ms",
-                            value: $engine.refractoryMs, in: 20...800, step: 10)
                     Stepper("Run timeout: \(Int(engine.maxRunSeconds)) s",
                             value: $engine.maxRunSeconds, in: 3...300, step: 1)
                 } header: {
-                    Text("Shot detection")
+                    Text("Hearing your shots")
                 } footer: {
-                    Text("The threshold is recalibrated to the room's noise floor before every buzzer. "
-                       + "Blanking ignores the buzzer's own sound — it also means a shot inside that "
-                       + "window can't be detected, so keep it just long enough.\n\n"
-                       + "Shot dead time is how long the detector ignores the mic after each shot. "
-                       + "A gunshot is a 1–3 ms transient, so live fire wants ~100 ms. A shouted "
-                       + "“Bang!” lasts 300–500 ms and needs ~300 ms or one shout counts as several "
-                       + "shots. No single value serves both — set it for how you're practising.")
-                }
-
-                Section {
-                    VStack(alignment: .leading) {
-                        Text(engine.minThreshold <= 0
-                             ? "Minimum level: off"
-                             : String(format: "Minimum level: %.2f", engine.minThreshold))
-                        Slider(value: $engine.minThreshold, in: 0...0.9, step: 0.05)
-                    }
-                    Toggle("Require a sharp attack", isOn: $engine.impulseGate)
-                    if engine.impulseGate {
-                        VStack(alignment: .leading) {
-                            Text(String(format: "Attack ratio: %.1f×", engine.impulseRatio))
-                            Slider(value: $engine.impulseRatio, in: 2...30, step: 0.5)
-                        }
-                    }
-                    Toggle("Log attack ratios", isOn: $engine.logImpulse)
-                } header: {
-                    Text("Rejecting holster noise")
-                } footer: {
-                    Text("Drawing and reholstering are loud enough to cross the threshold and be "
-                       + "counted as a shot, which ruins the first-shot time on every “from the "
-                       + "holster” drill.\n\n"
-                       + "Minimum level is the blunt fix: a gunshot at the microphone is close to "
-                       + "full scale, a holster is not. Try 0.40–0.60 for live fire. Too high and "
-                       + "real shots go missing, so raise it a step at a time.\n\n"
-                       + "Attack ratio is the sharp fix: it compares each loud moment with the "
-                       + "sound just before it. A gunshot goes from nothing to everything inside a "
-                       + "millisecond; a holster draw ramps up. It is OFF by default because a "
-                       + "shouted “Bang!” ramps up too and would be rejected with it — this is a "
-                       + "live-fire setting, not a dry-practice one, and the right number has not "
-                       + "been measured yet.\n\n"
-                       + "Leave logging on for one range session, then read the ratios out of the "
-                       + "session log below: shots and holster noise will fall into two groups. "
-                       + "Set the ratio between them.")
+                    Text("This is dry practice: every shot is you shouting. The app listens for "
+                       + "how LOUD you are, never for what you said — recognising words would put "
+                       + "speech recognition, which lags by up to a second, into the timing. "
+                       + "Shout “bang”, shout “rack”, shout anything.\n\n"
+                       + "The threshold is recalibrated to the room's noise floor before every "
+                       + "buzzer, so a quiet room and a noisy one both work without touching "
+                       + "anything. Sensitivity nudges that up or down.\n\n"
+                       + "Ignore quiet sounds puts a hard floor under it, for when something in "
+                       + "the room keeps getting counted — a holster draw, a door, a dog. Raise "
+                       + "it one step at a time: too high and your own shouts stop registering.\n\n"
+                       + "Shout dead time is how long the mic is ignored after each shout. One "
+                       + "“bang” lasts 300–500 ms and would otherwise count as three or four "
+                       + "shots, so this cannot go much below 300. It also means your splits "
+                       + "measure how fast you can talk, not how fast you can shoot.\n\n"
+                       + "Buzzer blanking ignores the buzzer's own sound. A shout inside that "
+                       + "window can't be heard either, so keep it just long enough.")
                 }
 
                 Section {
@@ -447,47 +428,25 @@ private struct SettingsView: View {
                                     }),
                                 in: 0...AmmoState.maxRounds)
                     }
-                    Toggle("Auto-swap when dry", isOn: $engine.autoAdvanceOnEmpty)
-                    if engine.autoAdvanceOnEmpty {
-                        Label("“Empty mag. Reload!” is not called, and calling your reload "
-                            + "out loud does nothing, while auto-swap is on.",
-                              systemImage: "info.circle")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Stepper("Reload dead time: \(Int(engine.reloadBlankingMs)) ms",
-                                value: $engine.reloadBlankingMs, in: 0...2000, step: 50)
-                    }
                 } header: {
                     Text("Ammunition")
                 } footer: {
-                    Text("Two different operations, deliberately kept apart:\n\n"
-                       + "RELOAD, on the clock, swaps the magazine in the gun for the next one. "
-                       + "Magazines go 1 → 2 → 3 and a magazine you reload past is on the ground "
-                       + "— it is never used again this string, even with rounds left in it. "
-                       + "That is a tactical reload.\n\n"
-                       + "REFILL, between drills, tops all three magazines back up and goes back "
-                       + "to magazine 1. That is you picking them up and refilling them.\n\n"
-                       + "Every loud event costs a round: a shot fires one, a rack ejects one.\n\n"
-                       + "The two settings below answer the same question in opposite ways, so "
-                       + "pick one. With auto-swap ON the app moves to the next magazine by "
-                       + "itself and says nothing — good for drills that simply run to empty.\n\n"
-                       + "With it OFF the examiner calls “Empty mag. Reload!” the moment the gun "
-                       + "runs dry, and then simply listens. An empty gun cannot fire, so the "
-                       + "next noise it hears cannot be a shot — say “reload”, say anything, or "
-                       + "just let the slide going forward do it. No button, no words to get "
-                       + "right. The clock never stops, so the reload costs you time exactly as "
-                       + "it does on the line. RELOAD is still there if you would rather press "
-                       + "it.\n\n"
-                       + "Reload dead time is how long the microphone stays deaf afterwards, so "
-                       + "the magazine hitting the ground and the slide going forward don't land "
-                       + "as your first shot back. Shouting your reload wants ~300–500 ms. A "
-                       + "full mechanical reload makes noise for a second or more and is better "
-                       + "served by auto-swap.\n\n"
-                       + "One catch: the microphone is also deafened while the call is spoken, "
-                       + "because the examiner's voice comes out of the same speaker and would "
-                       + "otherwise be counted as a shot. A shot fired during the call is not "
-                       + "detected. You are reloading, so it should not come up.")
+                    Text("Every shout costs a round: a shot fires one, a rack ejects one. "
+                       + "Magazines go 1 → 2 → 3 and deplete across every drill in the session.\n\n"
+                       + "When the gun runs dry the examiner calls “Empty mag. Reload!” and then "
+                       + "listens. An empty gun cannot fire, so the next thing it hears cannot be "
+                       + "a shot — shout “reload”, or shout anything, and it counts as the "
+                       + "reload. No button and no words to get right. The clock never stops, so "
+                       + "the reload costs you time exactly as it does on the line.\n\n"
+                       + "RELOAD, on the clock, is still there for a tactical reload — swapping "
+                       + "with rounds still in the magazine, which the app can't guess at. The "
+                       + "magazine you leave behind is on the ground and is not used again this "
+                       + "string. REFILL, between drills, tops all three back up and returns to "
+                       + "magazine 1: that's you picking them up.\n\n"
+                       + "One catch: the mic is deafened while the examiner speaks, because its "
+                       + "voice comes out of the same speaker and would be counted as a shout. "
+                       + "A shot during the call is not heard. You're reloading, so it shouldn't "
+                       + "come up.")
                 }
 
                 Section {

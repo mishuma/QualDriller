@@ -91,8 +91,11 @@ struct ContentView: View {
             // audible cue during a timed string would cross the detector's
             // threshold and be counted as a shot.
             if engine.isRunning && engine.ammo.roundsInCurrent == 0 {
-                Label(engine.ammo.hasSpareMagazine ? "MAGAZINE EMPTY — RELOAD"
-                                                   : "OUT OF AMMUNITION",
+                Label(engine.ammo.hasSpareMagazine
+                        ? (engine.phase == "timing" && !engine.autoAdvanceOnEmpty
+                             ? "EMPTY — RELOAD, THEN CALL IT"
+                             : "MAGAZINE EMPTY — RELOAD")
+                        : "OUT OF AMMUNITION",
                       systemImage: "exclamationmark.triangle.fill")
                     .font(.subheadline.weight(.bold)).tracking(1)
                     .foregroundStyle(.white)
@@ -446,10 +449,14 @@ private struct SettingsView: View {
                     }
                     Toggle("Auto-swap when dry", isOn: $engine.autoAdvanceOnEmpty)
                     if engine.autoAdvanceOnEmpty {
-                        Label("“Empty mag. Reload!” is not called while auto-swap is on.",
+                        Label("“Empty mag. Reload!” is not called, and calling your reload "
+                            + "out loud does nothing, while auto-swap is on.",
                               systemImage: "info.circle")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                    } else {
+                        Stepper("Reload dead time: \(Int(engine.reloadBlankingMs)) ms",
+                                value: $engine.reloadBlankingMs, in: 0...2000, step: 50)
                     }
                 } header: {
                     Text("Ammunition")
@@ -464,15 +471,23 @@ private struct SettingsView: View {
                        + "Every loud event costs a round: a shot fires one, a rack ejects one.\n\n"
                        + "The two settings below answer the same question in opposite ways, so "
                        + "pick one. With auto-swap ON the app moves to the next magazine by "
-                       + "itself and says nothing — good for drills that simply run to empty. "
+                       + "itself and says nothing — good for drills that simply run to empty.\n\n"
                        + "With it OFF the examiner calls “Empty mag. Reload!” the moment the gun "
-                       + "runs dry and waits for you to press RELOAD. The clock keeps running "
-                       + "through the call either way.\n\n"
-                       + "One catch worth knowing: the microphone is deafened while that line is "
-                       + "spoken, because the examiner's voice comes out of the same speaker and "
-                       + "would otherwise be counted as a shot. A shot fired during the call is "
-                       + "not detected. You are reloading, so it should not come up — but that "
-                       + "is the reason if it ever does.")
+                       + "runs dry, and then simply listens. An empty gun cannot fire, so the "
+                       + "next noise it hears cannot be a shot — say “reload”, say anything, or "
+                       + "just let the slide going forward do it. No button, no words to get "
+                       + "right. The clock never stops, so the reload costs you time exactly as "
+                       + "it does on the line. RELOAD is still there if you would rather press "
+                       + "it.\n\n"
+                       + "Reload dead time is how long the microphone stays deaf afterwards, so "
+                       + "the magazine hitting the ground and the slide going forward don't land "
+                       + "as your first shot back. Shouting your reload wants ~300–500 ms. A "
+                       + "full mechanical reload makes noise for a second or more and is better "
+                       + "served by auto-swap.\n\n"
+                       + "One catch: the microphone is also deafened while the call is spoken, "
+                       + "because the examiner's voice comes out of the same speaker and would "
+                       + "otherwise be counted as a shot. A shot fired during the call is not "
+                       + "detected. You are reloading, so it should not come up.")
                 }
 
                 Section {

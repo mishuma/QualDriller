@@ -100,6 +100,10 @@ final class DrillEngine: ObservableObject {
     /// Swap to the next magazine automatically when the current one runs dry.
     /// Without this, live fire would require narrating every reload out loud.
     @Published var autoAdvanceOnEmpty: Bool { didSet { Self.d.set(autoAdvanceOnEmpty, forKey: "autoAdvanceOnEmpty") } }
+    /// Dead time after a reload is heard, so the rest of the reload — the
+    /// magazine hitting the ground, the slide going forward — is not counted as
+    /// the first shot back. See `awaitingReload`.
+    @Published var reloadBlankingMs: Double { didSet { Self.d.set(reloadBlankingMs, forKey: "reloadBlankingMs") } }
     /// Hard floor under the calibrated threshold. The threshold is derived from
     /// the room's noise floor, which in a quiet bay lands far below a gunshot
     /// and well within reach of a holster draw. Raising the floor is the blunt
@@ -184,7 +188,8 @@ final class DrillEngine: ObservableObject {
             // silently — which is worse than the false holster shot it fixes.
             // Turn on logging, shoot one string, then set it from the numbers.
             "minThreshold": 0.0, "impulseGate": false, "impulseRatio": 6.0,
-            "logImpulse": true, "readyPrompt": ReadyPrompt.shooterReady.rawValue
+            "logImpulse": true, "readyPrompt": ReadyPrompt.shooterReady.rawValue,
+            "reloadBlankingMs": 400.0
         ])
         useRandomDelay = d.bool(forKey: "useRandomDelay")
         fixedDelay     = d.double(forKey: "fixedDelay")
@@ -203,6 +208,7 @@ final class DrillEngine: ObservableObject {
         impulseGate    = d.bool(forKey: "impulseGate")
         impulseRatio   = d.double(forKey: "impulseRatio")
         logImpulse     = d.bool(forKey: "logImpulse")
+        reloadBlankingMs = d.double(forKey: "reloadBlankingMs")
         readyPrompt = ReadyPrompt(rawValue: d.string(forKey: "readyPrompt") ?? "") ?? .shooterReady
         voicePreference = Speaker.VoicePreference(
             rawValue: d.string(forKey: "voicePreference") ?? "") ?? .male
@@ -649,11 +655,55 @@ final class DrillEngine: ObservableObject {
             }
         }
 
+        /// The gun is empty and there is a magazine left to put in it.
+        ///
+        /// This is the one state in which a loud noise CANNOT be a shot: an
+        /// empty gun does not fire. So the usual "every loud event is a shot"
+        /// rule is suspended here and the next noise is read as the reload,
+        /// whether the shooter called it out or the gun made the sound itself.
+        /// He does not have to reach for the button, which costs him time he is
+        /// being scored on.
+        ///
+        /// Note what this is NOT: it is not the voice "reload" command that was
+        /// removed. Nothing is recognised, no words are involved, and — this is
+        /// the part that matters — no shot is ever recorded and then retracted.
+        /// The old command's failure mode was retroactively DELETING a real
+        /// shot. This one cannot: in this state no shot is recorded at all. The
+        /// worst it can do is advance a magazine early on stray noise, which
+        /// REFILL undoes and which never touches a shot time.
+        ///
+        /// The load-bearing assumption is the round count, which is only as
+        /// good as the detector feeding it. Anything miscounted as a shot —
+        /// a holster draw today — makes the app believe the gun is dry while it
+        /// is not, and a genuine shot then lands here and is read as a reload.
+        /// Fixing the holster false positive (see the impulse gate) is what
+        /// makes this rule sound, not optional polish.
+        func awaitingReload() -> Bool {
+            !autoAdvanceOnEmpty && ammo.roundsInCurrent == 0 && ammo.hasSpareMagazine
+        }
+
         while alive(gen), !doOverRequested, !stringComplete() {
             let remaining = AudioCore.elapsed(from: AudioCore.now(), to: deadline)
             if remaining <= 0 { break }
             guard let t = await awaitDetection(timeout: remaining) else { break }
             if doOverRequested { break }
+
+            if awaitingReload() {
+                // STOP while dry means end the string, not "I have reloaded".
+                if manualEndRequested { break }
+
+                ammo.reload()
+                let at = AudioCore.elapsed(from: t0, to: t)
+                runReloads.append(at)
+                let mag = ammo.currentMagazine
+                log("EXAM", String(format: "Reload heard at %.2fs — magazine %d, %d rounds.",
+                                   at, mag?.id ?? 0, mag?.rounds ?? 0))
+                // Go deaf for the rest of the reload. Without this the magazine
+                // hitting the ground and the slide going forward each land as
+                // the first shot back.
+                audio.setBlanking(untilHost: t &+ AudioCore.secToHost(max(0, reloadBlankingMs / 1000)))
+                continue                            // deliberately NOT a shot
+            }
 
             // Every audible event costs a round: a shot fires one, a rack ejects
             // one. The detector cannot tell them apart and does not need to.
@@ -817,7 +867,8 @@ final class DrillEngine: ObservableObject {
         audio.setBlanking(untilHost: AudioCore.now() &+ AudioCore.secToHost(30))
         log("EXAM", "Empty mag. Reload!")
         await speaker.say("Empty mag. Reload!")
-        // Short tail: the room is still settling from the last syllable.
+        // Short tail: the room is still settling from the last syllable. After
+        // this the next noise heard is read as the reload, not as a shot.
         audio.setBlanking(untilHost: AudioCore.now() &+ AudioCore.secToHost(0.12))
     }
 

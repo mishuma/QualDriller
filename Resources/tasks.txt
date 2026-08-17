@@ -21,12 +21,15 @@
 3.  From the holster, one round to the center of mass. | 4.0 | 1
 4.  From the holster, one round to the head. | 4.0 | 1
 5.  From the ready position of your choice, fire until empty, reload, and then fire two shots to the center of mass. | 8.0 | *
-6.  From the ready position, tack reload, on the buzzer, two to the chest one to the head. | 8.0 | 3
-7.  From the holster finish all your magazines. | 8.0 | *
-8.  Bringing the target out to 7 yards, from the holster, you're gonna give me two shots to the center of mass. | 4.0 | 2
+6.  From the ready position, tack reload, on the buzzer, two to the chest and one to the head. | 8.0 | 3
+7.  From the holster, finish all your magazines. | 8.0 | *
+8.  Bringing the target out to 7 yards, from the holster, fire two shots to the center of mass. | 4.0 | 2
 9.  From the holster, give me three shots to the center of mass. Standby. | 6.0 | 3
 10. From the holster, give me four shots to the center of mass. Standby. | 8.0 | 4
-11. From the holster, give me five shots to the center of mass with the reload obviously. Standby. | 12.0 | 5
-12. From the ready position of your choice, fire until empty. | 8.0 | mag
-13. Bringing the target out to 15 yards, from the holster, one shot to the head, you have six seconds to do this drill. | 6.0 | 1
+11. From the holster, give me five shots to the center of mass with the reload, obviously. Standby. | 12.0 | 5
+12. From the ready position of your choice, fire until empty. | 8.0 | *
+13. Bringing the target out to 15 yards, from the holster, take one shot to the head, you have six seconds to do this drill. | 6.0 | 1
 14. OK, you're going to clear a jam and any malfunction you may have. You have four shots. From the shooting position. Stand by. | 18.0 | 4
+15. You will shoot a string of six one-handed (strong hand) shots to the center of mass from 7 yards. | 12.0 | 6
+16. For the double-feed drill, you will move behind cover while clearing malfunctions. | 18.0 | 4
+17. For the tap-rack drill, you will move behind cover while clearing malfunctions. | 18.0 | 4

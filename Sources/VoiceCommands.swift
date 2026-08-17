@@ -260,14 +260,23 @@ final class Speaker: NSObject, AVSpeechSynthesizerDelegate {
     /// the utterance in flight is useless when the caller's very next line is
     /// another `say`, so the examiner talks on through the whole readback while
     /// the drill keeps walking forward.
+    ///
+    /// The latch is a LOAN, not a switch. Whoever cancels owes a `resume()` at
+    /// the point the drill next intends to speak — a do-over latched it and
+    /// never cleared it, which muted the examiner for the rest of the session.
+    /// `suppressedCount` exists so that failure is visible in the log instead of
+    /// looking like a volume problem.
     private(set) var isStopped = false
+    /// How many lines the latch has swallowed. Nonzero after a session where
+    /// the examiner went quiet is the fingerprint of a missing `resume()`.
+    private(set) var suppressedCount = 0
 
     override init() {
         super.init()
         synth.delegate = self
     }
 
-    func resume() { isStopped = false }
+    func resume() { isStopped = false; suppressedCount = 0 }
 
     func currentVoice() -> AVSpeechSynthesisVoice? {
         if resolved == nil { resolved = Self.bestVoice(for: preference) }
@@ -276,11 +285,19 @@ final class Speaker: NSObject, AVSpeechSynthesizerDelegate {
 
     func say(_ text: String) async {
         guard enabled, !isStopped else {
-            if enabled { return }
+            if enabled { suppressedCount += 1; return }
             try? await Task.sleep(for: .milliseconds(120))
             return
         }
         await withCheckedContinuation { c in
+            // Re-check under the same actor step that stores the continuation.
+            // `cancel()` can land between the guard above and here, and without
+            // this the utterance starts anyway, after the latch said stop.
+            guard !self.isStopped else {
+                self.suppressedCount += 1
+                c.resume()
+                return
+            }
             self.continuation = c
             let u = AVSpeechUtterance(string: text)
             u.voice = currentVoice()

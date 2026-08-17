@@ -426,6 +426,10 @@ final class DrillEngine: ObservableObject {
                 // During a run: re-run this one. Otherwise: back to whatever was
                 // last actually shot, which is what "do over" means out loud.
                 if !duringRun, let last = lastShotIndex { i = last }
+                // `requestDoOver` latched the speaker off to kill whatever the
+                // abandoned attempt still had queued. That debt is settled here,
+                // before the first line of the retry.
+                speaker.resume()
                 log("EXAM", "Do over.")
                 await speaker.say("Do over.")
             }
@@ -452,6 +456,15 @@ final class DrillEngine: ObservableObject {
     /// when that happens — so the drill is shown, not read.
     private func awaitQueued(_ task: DrillTask, number: Int, total: Int,
                              gen: Int) async -> QueuedOutcome {
+        // Every task passes through here, so this is the one place that can
+        // guarantee a drill never begins with the examiner still latched off by
+        // something the previous attempt cancelled. Cheap, and it makes the
+        // whole class of "the voice stopped working" bug unreachable.
+        if speaker.suppressedCount > 0 {
+            log("", "examiner was muted — \(speaker.suppressedCount) line(s) skipped")
+        }
+        speaker.resume()
+
         phase = "queued"
         commandText = task.text
         hint = "task \(number) of \(total) · \(task.shotsLabel) · “start”"

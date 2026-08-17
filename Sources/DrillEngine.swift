@@ -353,6 +353,23 @@ final class DrillEngine: ObservableObject {
     /// from RELOAD (`reloadNow`) on purpose: refilling the magazines is not
     /// reloading the gun, and the two must never be reachable from the same
     /// phase or they will be pressed interchangeably.
+    /// Puts the magazine capacities back to the built-in loadout.
+    ///
+    /// This exists because `UserDefaults.register(defaults:)` only supplies a
+    /// value when none is saved. The moment the steppers are touched a value is
+    /// saved, and from then on changing `AmmoState.defaultCapacities` in code
+    /// cannot reach the device at all — the saved value shadows it forever.
+    /// Without this button the only way back to the shipped loadout is to
+    /// delete the app.
+    func resetAmmoToDefault() {
+        magCapacities = AmmoState.defaultCapacities
+        if !isRunning {
+            activeLoadout = magCapacities
+            ammo = .loaded(magCapacities)
+        }
+        log("EXAM", "Loadout reset — \(AmmoState.defaultLabel).")
+    }
+
     func refillAll() {
         guard phase == "queued" else { return }
         ammo.refill(to: activeLoadout)

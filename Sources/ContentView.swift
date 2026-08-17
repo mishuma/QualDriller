@@ -437,7 +437,16 @@ private struct SettingsView: View {
                                 in: 0...AmmoState.maxRounds)
                     }
 
+                    LabeledContent("Loadout",
+                                   value: engine.magCapacities.prefix(3)
+                                       .map(String.init).joined(separator: " / "))
                     LabeledContent("Rounds per session", value: "\(engine.totalCapacity)")
+
+                    if Array(engine.magCapacities.prefix(3)) != AmmoState.defaultCapacities {
+                        Button("Reset to \(AmmoState.defaultLabel)") {
+                            engine.resetAmmoToDefault()
+                        }
+                    }
 
                     if !engine.overAmmoTasks.isEmpty {
                         Label("Drill \(engine.overAmmoTasks.map(String.init).joined(separator: ", ")) "

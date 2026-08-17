@@ -30,6 +30,10 @@ struct AmmoState: Hashable {
     static let maxMagazines = 3
     static let maxRounds = 10
     static let defaultCapacities = [10, 10, 5]
+    /// "10 / 10 / 5" — derived, so a label can never drift from the value.
+    static var defaultLabel: String {
+        defaultCapacities.map(String.init).joined(separator: " / ")
+    }
 
     private(set) var magazines: [Magazine]
     /// Index into `magazines` of the magazine currently in the gun.

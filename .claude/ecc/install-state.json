@@ -1,0 +1,71 @@
+{
+  "schemaVersion": "ecc.install.v1",
+  "installedAt": "2026-08-18T14:15:39.844Z",
+  "target": {
+    "id": "claude-project",
+    "target": "claude-project",
+    "kind": "project",
+    "root": "/Users/jeff/Github/personal/Qualifier Drill/QualDriller/.claude",
+    "installStatePath": "/Users/jeff/Github/personal/Qualifier Drill/QualDriller/.claude/ecc/install-state.json"
+  },
+  "request": {
+    "profile": null,
+    "modules": [],
+    "includeComponents": [
+      "skill:swiftui-patterns",
+      "skill:swift-concurrency-6-2",
+      "skill:swift-protocol-di-testing"
+    ],
+    "excludeComponents": [],
+    "legacyLanguages": [],
+    "legacyMode": false
+  },
+  "resolution": {
+    "selectedModules": [
+      "skill-swift-concurrency-6-2",
+      "skill-swift-protocol-di-testing",
+      "skill-swiftui-patterns"
+    ],
+    "skippedModules": []
+  },
+  "source": {
+    "repoVersion": "2.2.0",
+    "repoCommit": "06c5e118c4d3e6c3b7f9445f973a2194c82de193",
+    "manifestVersion": 1
+  },
+  "operations": [
+    {
+      "kind": "copy-file",
+      "moduleId": "skill-swift-concurrency-6-2",
+      "sourcePath": "/Users/jeff/Github/personal/ECC/skills/swift-concurrency-6-2/SKILL.md",
+      "sourceRelativePath": "skills/swift-concurrency-6-2/SKILL.md",
+      "destinationPath": "/Users/jeff/Github/personal/Qualifier Drill/QualDriller/.claude/skills/swift-concurrency-6-2/SKILL.md",
+      "strategy": "preserve-relative-path",
+      "ownership": "managed",
+      "scaffoldOnly": false,
+      "contentSha256": "00aed6a804ff7dc9b37d119cdb115d0869643dd84caf3c01d7f058398ab1955a"
+    },
+    {
+      "kind": "copy-file",
+      "moduleId": "skill-swift-protocol-di-testing",
+      "sourcePath": "/Users/jeff/Github/personal/ECC/skills/swift-protocol-di-testing/SKILL.md",
+      "sourceRelativePath": "skills/swift-protocol-di-testing/SKILL.md",
+      "destinationPath": "/Users/jeff/Github/personal/Qualifier Drill/QualDriller/.claude/skills/swift-protocol-di-testing/SKILL.md",
+      "strategy": "preserve-relative-path",
+      "ownership": "managed",
+      "scaffoldOnly": false,
+      "contentSha256": "1e0b9fddf0a731956cdc686fb55dfa1862a5f172a5140299f4ec9d95c7a5e6e9"
+    },
+    {
+      "kind": "copy-file",
+      "moduleId": "skill-swiftui-patterns",
+      "sourcePath": "/Users/jeff/Github/personal/ECC/skills/swiftui-patterns/SKILL.md",
+      "sourceRelativePath": "skills/swiftui-patterns/SKILL.md",
+      "destinationPath": "/Users/jeff/Github/personal/Qualifier Drill/QualDriller/.claude/skills/swiftui-patterns/SKILL.md",
+      "strategy": "preserve-relative-path",
+      "ownership": "managed",
+      "scaffoldOnly": false,
+      "contentSha256": "79e3c8b5b7c38fa04778b1084cddc2f8db5f671e682b0e9c1d5bd2f95800f690"
+    }
+  ]
+}
